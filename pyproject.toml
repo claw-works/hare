@@ -1,0 +1,20 @@
+[project]
+name = "hare"
+version = "0.1.0"
+description = "Local TUI assistant powered by Amazon Bedrock AgentCore Harness"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.35.0",
+    "textual>=1.0.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+    "prompt_toolkit>=3.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+hare = "hare.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
