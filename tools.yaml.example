@@ -1,0 +1,21 @@
+# Hare 工具配置
+# 本文件可放在 ~/.hare/tools.yaml（用户级）或项目根目录（项目级）
+
+local_tools:
+  - name: shell_run
+    enabled: true
+    description: "在本机执行 shell 命令"
+  - name: read_file
+    enabled: true
+    description: "读取本地文件"
+  - name: write_file
+    enabled: true
+    description: "写入本地文件"
+
+gateway_tools:
+  # 填入 gateway_arn 并设 enabled: true 即可接入远端 MCP 工具
+  - name: agentmate_tools
+    enabled: false
+    gateway_arn: ""
+    description: "AgentMate MCP 工具集"
+    auth: awsIam
