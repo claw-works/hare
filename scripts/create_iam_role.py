@@ -20,6 +20,17 @@ TRUST_POLICY = {
             "Principal": {
                 "Service": "bedrock-agentcore.amazonaws.com"
             },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:ListEvents",
+                "bedrock-agentcore:GetMemory",
+                "bedrock-agentcore:CreateEvent",
+                "bedrock-agentcore:InvokeMemory",
+                "bedrock-agentcore:RetrieveMemoryRecords",
+            ],
+            "Resource": "*",
+        },
             "Action": "sts:AssumeRole",
         }
     ],
