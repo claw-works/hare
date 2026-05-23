@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from datetime import datetime
 import asyncio
 import sys
 
@@ -15,6 +16,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.markdown import Markdown
 
 from hare.harness import invoke_with_tool_loop
 from hare.session import get_manager
@@ -71,51 +73,73 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
     full_text = ""
     first_token = False
 
-    spinner_live = Live(
+    # 等待阶段用 spinner；收到第一个 token 后切换到 Live Markdown 实时渲染
+    waiting_live = Live(
         Spinner("dots", text=" [dim]🐇 思考中...[/dim]"),
         console=console,
         refresh_per_second=10,
         transient=True,
     )
-    spinner_live.start()
+    waiting_live.start()
+    response_live: Live | None = None
 
     try:
         async for event in invoke_with_tool_loop(session_id, message, actor_id=actor_id):
             if event["type"] == "text":
                 if not first_token:
-                    spinner_live.stop()
-                    console.print("\n[bold green]🐇 Hare:[/bold green]", end=" ")
+                    waiting_live.stop()
                     first_token = True
-                console.print(event["content"], end="", highlight=False)
+                    # 切换到 Markdown Live 渲染模式
+                    response_live = Live(
+                        console=console,
+                        refresh_per_second=15,
+                        vertical_overflow="visible",
+                    )
+                    response_live.start()
+                full_text += event["content"]
+                if response_live:
+                    response_live.update(
+                        Panel(Markdown(full_text),
+                              title="[bold green]🐇 Hare[/bold green]",
+                              border_style="green",
+                              padding=(0, 1))
+                    )
 
             elif event["type"] == "tool_call":
                 if not first_token:
-                    spinner_live.stop()
+                    waiting_live.stop()
                     first_token = True
+                if response_live:
+                    response_live.stop()
+                    response_live = None
                 _tool_line(event["name"])
 
             elif event["type"] == "tool_result":
                 _tool_done(event["name"], "error" not in event["result"])
                 if not first_token:
-                    spinner_live.start()
+                    waiting_live.start()
                 else:
                     first_token = False
-                    spinner_live = Live(
+                    waiting_live = Live(
                         Spinner("dots", text=" [dim]🐇 继续思考...[/dim]"),
                         console=console,
                         refresh_per_second=10,
                         transient=True,
                     )
-                    spinner_live.start()
+                    waiting_live.start()
 
             elif event["type"] == "done":
                 if not first_token:
-                    spinner_live.stop()
-                console.print()
+                    waiting_live.stop()
+                if response_live:
+                    response_live.stop()
+                    response_live = None
                 break
 
     except Exception:
-        spinner_live.stop()
+        waiting_live.stop()
+        if response_live:
+            response_live.stop()
         raise
 
 
@@ -169,8 +193,10 @@ async def run_chat() -> None:
 
         if message in ("/clear",):
             console.clear()
-            session_key, session_entry = manager.new_session(session_name)
+            new_name = f"会话 {datetime.now().strftime('%m/%d %H:%M')}"
+            session_key, session_entry = manager.new_session(new_name)
             session_id = session_entry["id"]
+            session_name = new_name
             _banner(session_name, session_id)
             continue
 

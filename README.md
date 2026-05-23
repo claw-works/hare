@@ -50,8 +50,8 @@ Memory is bound at the Harness layer by the admin — employees don't need any e
 | IAM Role + Harness | **Admin** | One-time setup, employees don't need to worry about it |
 | AgentCore Memory | **Admin** | Bound to the Harness, transparent to employees (required) |
 | AgentCore Gateway tools | **Admin** | Register enterprise MCP tools, distribute `tools.yaml` template |
-| `AWS_REGION` / `AWS_PROFILE` / `HARNESS_ARN` | **Employee** | Required for daily use |
-| Which remote tools to enable in `tools.yaml` | **Employee** | Self-select from the admin-provided tool list |
+| `AWS_REGION` / `AWS_PROFILE` / `HARNESS_ARN` | **Employee** | Fill in `~/.hare/.env`, required for daily use |
+| Which remote tools to enable in `tools.yaml` | **Employee** | Edit `~/.hare/tools.yaml`, self-select from the admin-provided tool list |
 
 ---
 
@@ -125,25 +125,17 @@ gateway_tools:
 cd hare && uv sync
 ```
 
-### 2. Configure .env
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`, fill in only three items:
-
-```
-AWS_REGION=us-west-2
-AWS_PROFILE=your-profile-name
-HARNESS_ARN=<provided by admin>
-```
-
-### 3. Launch
+### 2. Launch
 
 ```bash
 PYTHONUTF8=1 uv run hare
 ```
+
+On first launch, hare automatically creates config files in `~/.hare/`:
+- `~/.hare/.env` — copied from `.env.example` template, fill in `AWS_REGION`, `AWS_PROFILE`, `HARNESS_ARN`
+- `~/.hare/tools.yaml` — copied from `tools.yaml.example` template, enable tools as needed
+
+After filling in `~/.hare/.env`, re-run to start.
 
 ---
 
@@ -152,7 +144,7 @@ PYTHONUTF8=1 uv run hare
 The admin provides a `tools.yaml` template listing registered enterprise tools. Employees enable as needed:
 
 ```yaml
-# tools.yaml (place in project root or ~/.hare/tools.yaml)
+# ~/.hare/tools.yaml
 
 local_tools:
   - name: shell_run
@@ -230,15 +222,15 @@ hare/
 │   │   └── session_picker.py  # Session picker TUI
 │   └── tools/
 │       ├── __init__.py    # Tool registry + execute_tool()
-│       ├── config.py      # tools.yaml loader
+│       ├── config.py      # ~/.hare/tools.yaml loader
 │       ├── shell.py       # shell_run
 │       └── filesystem.py  # read_file / write_file
 ├── scripts/
 │   ├── create_iam_role.py # Admin: create IAM execution role
 │   ├── create_harness.py  # Admin: create Harness resource
 │   └── create_memory.py   # Admin: create and bind AgentCore Memory
-├── tools.yaml             # Employee: tool toggle config (not in git)
-├── .env                   # Employee: environment variables (not in git)
+├── tools.yaml.example     # Template: auto-copied to ~/.hare/tools.yaml on first launch
+├── .env.example           # Template: auto-copied to ~/.hare/.env on first launch
 └── pyproject.toml
 ```
 

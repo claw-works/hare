@@ -96,15 +96,19 @@ async def invoke_with_tool_loop(
     harness_arn = os.environ["HARNESS_ARN"]
     all_tools = _build_all_tools()
 
-    # 每次只传当前轮内容，历史由 Harness + Memory 在服务端托管
+    # 第一轮：只传当前用户消息，Memory 帮你补历史
+    # tool_use 续轮：必须传 [assistant+toolUse, user+toolResult] 配对，
+    #   不能只传 toolResult（因为 Memory 恢复的历史里没有这次 invoke 产生的 toolUse）
+    # 因此 tool_use 循环内维护一个局部 messages 列表（仅当前 invoke 轮次）
     current_content: list[dict[str, Any]] = [{"text": message}]
     current_role = "user"
+    local_messages: list[dict[str, Any]] = []  # 当前 invoke 产生的 toolUse/toolResult 配对
 
     while True:
         invoke_kwargs: dict[str, Any] = dict(
             harnessArn=harness_arn,
             runtimeSessionId=session_id,
-            messages=[{"role": current_role, "content": current_content}],
+            messages=local_messages + [{"role": current_role, "content": current_content}],
             systemPrompt=SYSTEM_PROMPT,
             tools=all_tools,
         )
@@ -117,6 +121,7 @@ async def invoke_with_tool_loop(
         tool_uses: list[dict[str, Any]] = []
         current_tool: dict[str, Any] | None = None
         stop_reason = "end_turn"
+        assistant_content: list[dict[str, Any]] = []
 
         for event in response["stream"]:
             if "contentBlockStart" in event:
@@ -146,6 +151,13 @@ async def invoke_with_tool_loop(
                         input_data = {}
                     current_tool["input"] = input_data
                     tool_uses.append(current_tool)
+                    assistant_content.append({
+                        "toolUse": {
+                            "toolUseId": current_tool["toolUseId"],
+                            "name": current_tool["name"],
+                            "input": input_data,
+                        }
+                    })
                     current_tool = None
 
             elif "messageStop" in event:
@@ -164,6 +176,12 @@ async def invoke_with_tool_loop(
                         "status": "error" if "error" in result else "success",
                     }
                 })
+            # 把本次 invoke 的 assistant toolUse 加入局部 messages，
+            # 让下一轮的 toolResult 能和它配对
+            if assistant_content:
+                if full_text:
+                    assistant_content.insert(0, {"text": full_text})
+                local_messages.append({"role": "assistant", "content": assistant_content})
             current_role = "user"
             tool_uses = []
             full_text = ""

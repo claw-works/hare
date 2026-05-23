@@ -49,8 +49,8 @@ Harness 在每轮对话中自动做两件事：
 | IAM Role + Harness | **运维** | 一次性创建，员工无需关心 |
 | AgentCore Memory | **运维** | 绑定在 Harness 上，员工无感知（必须启用） |
 | AgentCore Gateway 工具 | **运维** | 注册企业 MCP 工具，下发 `tools.yaml` 模板 |
-| `AWS_REGION` / `AWS_PROFILE` / `HARNESS_ARN` | **员工** | 日常使用必填 |
-| `tools.yaml` 中启用哪些远程工具 | **员工** | 从运维提供的工具列表中自选启用 |
+| `AWS_REGION` / `AWS_PROFILE` / `HARNESS_ARN` | **员工** | 填入 `~/.hare/.env`，日常使用必填 |
+| `tools.yaml` 中启用哪些远程工具 | **员工** | 编辑 `~/.hare/tools.yaml`，从运维提供的工具列表中自选启用 |
 
 ---
 
@@ -124,25 +124,17 @@ gateway_tools:
 cd hare && uv sync
 ```
 
-### 2. 配置 .env
-
-```bash
-cp .env.example .env
-```
-
-编辑 `.env`，只填三项：
-
-```
-AWS_REGION=us-west-2
-AWS_PROFILE=你的profile名
-HARNESS_ARN=<运维提供>
-```
-
-### 3. 启动
+### 2. 启动
 
 ```bash
 PYTHONUTF8=1 uv run hare
 ```
+
+首次启动时，hare 会自动在 `~/.hare/` 创建配置文件：
+- `~/.hare/.env` — 从 `.env.example` 模板拷贝，需填入 `AWS_REGION`、`AWS_PROFILE`、`HARNESS_ARN`
+- `~/.hare/tools.yaml` — 从 `tools.yaml.example` 模板拷贝，可按需启用工具
+
+填写完 `~/.hare/.env` 后重新运行即可。
 
 ---
 
@@ -151,7 +143,7 @@ PYTHONUTF8=1 uv run hare
 运维会提供一份 `tools.yaml` 模板，列出已注册的企业工具。员工按需启用：
 
 ```yaml
-# tools.yaml（放在项目根目录或 ~/.hare/tools.yaml）
+# ~/.hare/tools.yaml
 
 local_tools:
   - name: shell_run
@@ -229,15 +221,15 @@ hare/
 │   │   └── session_picker.py  # Session 选择器 TUI
 │   └── tools/
 │       ├── __init__.py    # 工具注册表 + execute_tool()
-│       ├── config.py      # tools.yaml 加载
+│       ├── config.py      # ~/.hare/tools.yaml 加载
 │       ├── shell.py       # shell_run
 │       └── filesystem.py  # read_file / write_file
 ├── scripts/
 │   ├── create_iam_role.py # 运维：创建 IAM 执行角色
 │   ├── create_harness.py  # 运维：创建 Harness 资源
 │   └── create_memory.py   # 运维：创建并绑定 AgentCore Memory
-├── tools.yaml             # 员工：工具开关配置（不进 git）
-├── .env                   # 员工：环境变量（不进 git）
+├── tools.yaml.example     # 模板：首次启动自动拷贝到 ~/.hare/tools.yaml
+├── .env.example           # 模板：首次启动自动拷贝到 ~/.hare/.env
 └── pyproject.toml
 ```
 

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import os
 from pathlib import Path
 
 import yaml
@@ -22,18 +21,14 @@ DEFAULT_CONFIG = {
 }
 
 def load_tools_config() -> dict:
-    """加载 tools.yaml，找不到时返回默认配置。"""
-    candidates = [
-        Path.home() / ".hare" / "tools.yaml",
-        Path(__file__).parent.parent.parent / "tools.yaml",
-    ]
-    for path in candidates:
-        if path.exists():
-            try:
-                with open(path, encoding="utf-8") as f:
-                    return yaml.safe_load(f) or DEFAULT_CONFIG
-            except Exception:
-                pass
+    """加载 ~/.hare/tools.yaml，找不到时返回默认配置。"""
+    path = Path.home() / ".hare" / "tools.yaml"
+    if path.exists():
+        try:
+            with open(path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or DEFAULT_CONFIG
+        except Exception:
+            pass
     return DEFAULT_CONFIG
 
 def get_enabled_local_tools() -> list[str]:
