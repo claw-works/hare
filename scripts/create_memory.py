@@ -82,8 +82,7 @@ def main():
             "optionalValue": {
                 "agentCoreMemoryConfiguration": {
                     "arn": memory_arn,
-                    "actorId": "$session",
-                    "messagesCount": 20,
+                    "messagesCount": 20,   # actorId 不传，Harness 用 session 级别默认隔离
                 }
             }
         }
