@@ -48,7 +48,7 @@ Memory is bound at the Harness layer by the admin — employees don't need any e
 | Config Item | Owner | Description |
 |-------------|-------|-------------|
 | IAM Role + Harness | **Admin** | One-time setup, employees don't need to worry about it |
-| AgentCore Memory | **Admin** | Bound to the Harness, transparent to employees |
+| AgentCore Memory | **Admin** | Bound to the Harness, transparent to employees (required) |
 | AgentCore Gateway tools | **Admin** | Register enterprise MCP tools, distribute `tools.yaml` template |
 | `AWS_REGION` / `AWS_PROFILE` / `HARNESS_ARN` | **Employee** | Required for daily use |
 | Which remote tools to enable in `tools.yaml` | **Employee** | Self-select from the admin-provided tool list |
@@ -84,12 +84,19 @@ uv run python scripts/create_harness.py
 # Outputs HARNESS_ARN, add to .env and share with employees
 ```
 
-### 4. Enable Long-term Memory (Optional)
+### 4. Enable Long-term Memory (**Required**)
+
+AgentCore Memory is a core dependency of hare. Without Memory, the Harness cannot maintain context across conversation turns (hare client only sends the current message each time, fully relying on Memory to maintain conversation history on the server side).
 
 ```bash
 uv run python scripts/create_memory.py
 # Automatically creates Memory and binds it to the Harness; employees need no action
 ```
+
+**How Memory works:**
+- **Short-term memory**: Historical messages within the same session, automatically recalled and injected into context
+- **Long-term memory**: Key information distilled across sessions (user preferences, project background, etc.), semantically recalled
+- The client only sends the current message each turn; the Harness automatically injects relevant memories before inference
 
 ### 5. Connect Remote Tools (Optional)
 

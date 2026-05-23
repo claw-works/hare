@@ -47,7 +47,7 @@ Harness 在每轮对话中自动做两件事：
 | 配置项 | 负责方 | 说明 |
 |--------|--------|------|
 | IAM Role + Harness | **运维** | 一次性创建，员工无需关心 |
-| AgentCore Memory | **运维** | 绑定在 Harness 上，员工无感知 |
+| AgentCore Memory | **运维** | 绑定在 Harness 上，员工无感知（必须启用） |
 | AgentCore Gateway 工具 | **运维** | 注册企业 MCP 工具，下发 `tools.yaml` 模板 |
 | `AWS_REGION` / `AWS_PROFILE` / `HARNESS_ARN` | **员工** | 日常使用必填 |
 | `tools.yaml` 中启用哪些远程工具 | **员工** | 从运维提供的工具列表中自选启用 |
@@ -83,12 +83,19 @@ uv run python scripts/create_harness.py
 # 输出 HARNESS_ARN，填入 .env，并告知员工
 ```
 
-### 4. 启用长期记忆（可选）
+### 4. 启用长期记忆（**必须**）
+
+AgentCore Memory 是 hare 的核心依赖。没有 Memory，Harness 无法在多轮对话中保持上下文（hare 客户端每次只传当前消息，完全依赖 Memory 在服务端维护对话历史）。
 
 ```bash
 uv run python scripts/create_memory.py
 # 自动创建 Memory 并绑定到 Harness，员工无需任何操作
 ```
+
+**Memory 工作原理：**
+- **短期记忆**：同一 session 内的历史消息，自动召回注入上下文
+- **长期记忆**：跨 session 提炼的关键信息（用户偏好、项目背景等），语义召回
+- 客户端每次只传当前这轮消息，Harness 在推理前自动注入相关记忆
 
 ### 5. 接入远端工具（可选）
 

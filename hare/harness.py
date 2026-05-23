@@ -42,10 +42,7 @@ def _build_all_tools() -> list[dict[str, Any]]:
     tools = _build_inline_tools()
     for gw in get_gateway_tools():
         auth = gw.get("auth", "awsIam")
-        if auth == "none":
-            auth_config = {"none": {}}
-        else:
-            auth_config = {"awsIam": {}}
+        auth_config = {"none": {}} if auth == "none" else {"awsIam": {}}
         tools.append({
             "type": "agentcore_gateway",
             "name": gw["name"],
@@ -77,35 +74,47 @@ SYSTEM_PROMPT = [{"text": """你是 Hare，一个运行在用户本地机器上�
 async def invoke_with_tool_loop(
     session_id: str,
     message: str,
-    messages: list[dict[str, Any]],
+    actor_id: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Invoke Harness，处理 tool_use 循环，yield 流式事件。
 
-    - messages 由调用方（app.py）维护和传入，harness 不自管历史
-    - runtimeSessionId 用于 Harness 的 stateful 会话（内存/filesystem）
+    Memory 模式（需绑定 AgentCore Memory）：
+    - 每次只传当前消息，Harness 自动从 Memory 加载历史上下文
+    - session_id 相同的调用在服务端自动续上下文，无需客户端维护历史
+    - actor_id 用于多用户场景，Memory 按 actorId 隔离不同用户的记忆
+
+    Yields:
+      {"type": "text",        "content": str}
+      {"type": "tool_call",   "name": str}
+      {"type": "tool_result", "name": str, "result": dict}
+      {"type": "done",        "full_text": str}
     """
     client = _get_client()
     harness_arn = os.environ["HARNESS_ARN"]
-    inline_tools = _build_all_tools()
+    all_tools = _build_all_tools()
 
-    # 追加用户消息（由调用方传入 messages 引用，修改会自动同步到 SessionManager）
-    messages.append({"role": "user", "content": [{"text": message}]})
+    # 每次只传当前轮内容，历史由 Harness + Memory 在服务端托管
+    current_content: list[dict[str, Any]] = [{"text": message}]
+    current_role = "user"
 
     while True:
-        response = client.invoke_harness(
+        invoke_kwargs: dict[str, Any] = dict(
             harnessArn=harness_arn,
             runtimeSessionId=session_id,
-            messages=messages,          # 传完整历史
+            messages=[{"role": current_role, "content": current_content}],
             systemPrompt=SYSTEM_PROMPT,
-            tools=inline_tools,
+            tools=all_tools,
         )
+        if actor_id:
+            invoke_kwargs["actorId"] = actor_id
+
+        response = client.invoke_harness(**invoke_kwargs)
 
         full_text = ""
         tool_uses: list[dict[str, Any]] = []
         current_tool: dict[str, Any] | None = None
         stop_reason = "end_turn"
-        assistant_content: list[dict[str, Any]] = []
 
         for event in response["stream"]:
             if "contentBlockStart" in event:
@@ -135,52 +144,27 @@ async def invoke_with_tool_loop(
                         input_data = {}
                     current_tool["input"] = input_data
                     tool_uses.append(current_tool)
-                    assistant_content.append({
-                        "toolUse": {
-                            "toolUseId": current_tool["toolUseId"],
-                            "name": current_tool["name"],
-                            "input": input_data,
-                        }
-                    })
                     current_tool = None
-                elif full_text:
-                    pass
 
             elif "messageStop" in event:
                 stop_reason = event["messageStop"].get("stopReason", "end_turn")
 
-        # 把 assistant 这轮的文字也加进 content
-        if full_text and not any("toolUse" in c for c in assistant_content):
-            assistant_content = [{"text": full_text}]
-        elif full_text:
-            assistant_content.insert(0, {"text": full_text})
-
-        # 把 assistant 消息加入历史
-        if assistant_content:
-            messages.append({"role": "assistant", "content": assistant_content})
-
         if stop_reason == "tool_use" and tool_uses:
-            # 执行本地工具
-            tool_result_content: list[dict[str, Any]] = []
+            # 本地工具执行，下一轮只传 toolResult（不传历史）
+            current_content = []
             for tool in tool_uses:
                 result = await execute_tool(tool["name"], tool["input"])
                 yield {"type": "tool_result", "name": tool["name"], "result": result}
-                tool_result_content.append({
+                current_content.append({
                     "toolResult": {
                         "toolUseId": tool["toolUseId"],
                         "content": [{"text": json.dumps(result, ensure_ascii=False)}],
                         "status": "error" if "error" in result else "success",
                     }
                 })
-
-            messages.append({"role": "user", "content": tool_result_content})
+            current_role = "user"
             tool_uses = []
             full_text = ""
         else:
             yield {"type": "done", "full_text": full_text}
             break
-
-
-def clear_session(session_id: str, messages: list) -> None:
-    """清空传入的 messages 列表（由调用方负责持久化）。"""
-    messages.clear()

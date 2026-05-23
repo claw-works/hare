@@ -1,4 +1,4 @@
-"""Session 管理模块 — 持久化多会话，支持 messages 历史。
+"""Session 管理模块 — 持久化多会话元数据。
 
 存储格式 (~/.hare/sessions.json):
 {
@@ -6,7 +6,6 @@
     "<uuid>": {
       "id": "huuid...",
       "name": "默认会话",
-      "messages": [...],
       "created_at": "2026-05-22T21:00:00",
       "updated_at": "2026-05-22T21:57:00"
     }
@@ -20,7 +19,6 @@ import json
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 SESSIONS_FILE = Path.home() / ".hare" / "sessions.json"
 
@@ -86,7 +84,6 @@ class SessionManager:
         entry = {
             "id": session_id,
             "name": name,
-            "messages": [],
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -102,32 +99,6 @@ class SessionManager:
             self._store["last_active"] = key
             _save_store(self._store)
         return session
-
-    # ── 消息历史操作 ────────────────────────────────────────────────────────
-
-    def get_messages(self, key: str) -> list[dict[str, Any]]:
-        """获取 session 的 messages 列表（引用，修改会同步）。"""
-        return self._store["sessions"][key]["messages"]
-
-    def touch(self, key: str) -> None:
-        """更新 session 的 updated_at。"""
-        if key in self._store["sessions"]:
-            self._store["sessions"][key]["updated_at"] = _now()
-            _save_store(self._store)
-
-    def clear_messages(self, key: str) -> None:
-        """清空 session 的 messages 历史，并生成新 session_id（避免服务端错位）。"""
-        if key in self._store["sessions"]:
-            self._store["sessions"][key]["messages"] = []
-            self._store["sessions"][key]["id"] = _new_session_id()
-            self._store["sessions"][key]["updated_at"] = _now()
-            _save_store(self._store)
-
-    def save_messages(self, key: str) -> None:
-        """将当前 messages 持久化（messages 是引用，store 已同步，只需写盘）。"""
-        if key in self._store["sessions"]:
-            self._store["sessions"][key]["updated_at"] = _now()
-            _save_store(self._store)
 
     # ── 删除 / 重命名 ──────────────────────────────────────────────────────
 

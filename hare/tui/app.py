@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
@@ -17,7 +16,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import Spinner
 
-from hare.harness import invoke_with_tool_loop, clear_session
+from hare.harness import invoke_with_tool_loop
 from hare.session import get_manager
 from hare.tui.session_picker import pick_or_create_session, _find_key
 
@@ -67,8 +66,8 @@ def _tool_done(name: str, ok: bool) -> None:
     console.print(f"[dim]  {icon} {name} 完成[/dim]")
 
 
-async def _stream_response(session_id: str, message: str, messages: list) -> None:
-    """流式输出 Harness 回复，messages 由外部传入（持久化引用）。"""
+async def _stream_response(session_id: str, message: str, actor_id: str | None = None) -> None:
+    """流式输出 Harness 回复，历史由服务端 Memory 托管。"""
     full_text = ""
     first_token = False
 
@@ -81,7 +80,7 @@ async def _stream_response(session_id: str, message: str, messages: list) -> Non
     spinner_live.start()
 
     try:
-        async for event in invoke_with_tool_loop(session_id, message, messages):
+        async for event in invoke_with_tool_loop(session_id, message, actor_id=actor_id):
             if event["type"] == "text":
                 if not first_token:
                     spinner_live.stop()
@@ -133,7 +132,6 @@ async def run_chat() -> None:
     session_key, session_entry = await pick_or_create_session()
     session_id = session_entry["id"]
     session_name = session_entry["name"]
-    messages = manager.get_messages(session_key)  # 引用，修改自动同步
 
     _banner(session_name, session_id)
 
@@ -153,7 +151,6 @@ async def run_chat() -> None:
                     HTML("\n<ansigreen><b>[你]</b></ansigreen> "),
                 )
         except (EOFError, KeyboardInterrupt):
-            manager.save_messages(session_key)
             console.print("\n[dim]再见！[/dim]")
             break
 
@@ -167,26 +164,21 @@ async def run_chat() -> None:
         # ── 内置指令 ──────────────────────────────────────────────────────
 
         if message in ("/quit", "/exit"):
-            manager.save_messages(session_key)
             console.print("[dim]再见！[/dim]")
             break
 
         if message in ("/clear",):
             console.clear()
-            manager.clear_messages(session_key)
-            # clear_messages 已生成新 session_id，需重新读
-            session_id = manager.get_session(session_key)["id"]
-            messages = manager.get_messages(session_key)
+            session_key, session_entry = manager.new_session(session_name)
+            session_id = session_entry["id"]
             _banner(session_name, session_id)
             continue
 
         if message in ("/session", "/sessions"):
-            # 保存当前 session 历史，然后呼出选择器
-            manager.save_messages(session_key)
+            # 呼出选择器
             session_key, session_entry = await pick_or_create_session()
             session_id = session_entry["id"]
             session_name = session_entry["name"]
-            messages = manager.get_messages(session_key)
             _banner(session_name, session_id)
             continue
 
@@ -197,26 +189,21 @@ async def run_chat() -> None:
                 all_sessions = manager.list_sessions()
                 for i, s in enumerate(all_sessions):
                     mark = " ◀ 当前" if _find_key(manager, s["id"]) == session_key else ""
-                    turns = sum(1 for m in s.get("messages", []) if m.get("role") == "user")
                     console.print(f"  [dim]{i+1}.[/dim] [green]{s['name']}[/green]  "
-                                  f"[dim]{turns}轮  {s.get('updated_at','')[:10]}{mark}[/dim]")
+                                  f"[dim]{s.get('updated_at','')[:10]}{mark}[/dim]")
                 continue
             elif sub.startswith("new"):
                 new_name = sub[3:].strip()
-                manager.save_messages(session_key)
                 session_key, session_entry = manager.new_session(new_name)
                 session_id = session_entry["id"]
                 session_name = session_entry["name"]
-                messages = manager.get_messages(session_key)
                 console.print(f"  [green]✓ 新建会话：{session_name}[/green]")
                 _banner(session_name, session_id)
                 continue
 
         # ── 正常对话 ──────────────────────────────────────────────────────
         try:
-            await _stream_response(session_id, message, messages)
-            # 每轮回复后持久化历史
-            manager.save_messages(session_key)
+            await _stream_response(session_id, message)
         except KeyboardInterrupt:
             console.print("\n[dim]（中断）[/dim]")
         except Exception as e:
