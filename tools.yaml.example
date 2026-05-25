@@ -7,19 +7,20 @@
 # MCP 工具名格式：mcp__<server_name>__<tool_name>
 auto_allow:
   - "read_file"               # 只读工具直接放行
-  # - "shell_run"             # 取消注释则 shell 不再询问
-  # - "mcp__filesystem__*"    # filesystem MCP server 所有工具放行
-  # - "mcp__agentmate__*"     # agentmate MCP 所有工具放行
+  - "local_read_file"         # 只读工具直接放行
+  # - "local_shell"           # 取消注释则 shell 不再询问
+  # - "mcp__filesystem__*"    # filesystem MCP server 所有工具
+  # - "mcp__agentmate__*"     # agentmate MCP 所有工具
   # - "*"                     # 全部放行（不推荐）
 
 local_tools:
-  - name: shell_run
+  - name: local_shell
     enabled: true
     description: "在本机执行 shell 命令"
-  - name: read_file
+  - name: local_read_file
     enabled: true
     description: "读取本地文件"
-  - name: write_file
+  - name: local_write_file
     enabled: true
     description: "写入本地文件"
 

@@ -5,9 +5,9 @@ import yaml
 
 DEFAULT_CONFIG = {
     "local_tools": [
-        {"name": "shell_run",  "enabled": True,  "description": "在本机执行 shell 命令"},
-        {"name": "read_file",  "enabled": True,  "description": "读取本地文件"},
-        {"name": "write_file", "enabled": True,  "description": "写入本地文件"},
+        {"name": "local_shell",      "enabled": True, "description": "在本机执行 shell 命令"},
+        {"name": "local_read_file",  "enabled": True, "description": "读取本地文件"},
+        {"name": "local_write_file", "enabled": True, "description": "写入本地文件"},
     ],
     "gateway_tools": [
         {
