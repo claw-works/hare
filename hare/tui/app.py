@@ -115,6 +115,20 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
                     response_live = None
                 _tool_line(event["name"])
 
+            elif event["type"] == "server_tool_call":
+                # 服务端工具（Harness 内置 shell / Gateway MCP），只显示状态
+                if not first_token:
+                    waiting_live.stop()
+                    first_token = True
+                console.print(f"[bold cyan]  ⚡ 服务端执行:[/bold cyan] [cyan]{event['name']}[/cyan]...")
+                # 重启 spinner 等待服务端工具返回结果
+                first_token = False
+                waiting_live = Live(
+                    Spinner("dots", text=f" [dim]⚡ {event['name']} 执行中...[/dim]"),
+                    console=console, refresh_per_second=10, transient=True,
+                )
+                waiting_live.start()
+
             elif event["type"] == "tool_result":
                 _tool_done(event["name"], "error" not in event["result"])
                 if not first_token:

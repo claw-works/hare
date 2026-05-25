@@ -138,12 +138,19 @@ async def invoke_with_tool_loop(
             if "contentBlockStart" in event:
                 start = event["contentBlockStart"].get("start", {})
                 if "toolUse" in start:
-                    current_tool = {
-                        "toolUseId": start["toolUse"]["toolUseId"],
-                        "name": start["toolUse"]["name"],
-                        "input_json": "",
-                    }
-                    yield {"type": "tool_call", "name": current_tool["name"]}
+                    tool_type = start["toolUse"].get("type", "tool_use")
+                    tool_name = start["toolUse"]["name"]
+                    if tool_type == "tool_use":
+                        # inline_function：本地执行
+                        current_tool = {
+                            "toolUseId": start["toolUse"]["toolUseId"],
+                            "name": tool_name,
+                            "input_json": "",
+                        }
+                        yield {"type": "tool_call", "name": tool_name}
+                    else:
+                        # server_tool_use / mcp_tool_use：服务端执行，只显示状态
+                        yield {"type": "server_tool_call", "name": tool_name, "tool_type": tool_type}
 
             elif "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"].get("delta", {})
