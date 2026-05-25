@@ -60,6 +60,11 @@ def _build_all_tools() -> list[dict[str, Any]]:
         })
     # MCP tools
     tools.extend(get_mcp_manager().get_tools())
+
+    # AgentCore 内置工具（无需创建资源，直接声明即可）
+    tools.append({"type": "agentcore_browser", "name": "browser"})
+    tools.append({"type": "agentcore_code_interpreter", "name": "code_interpreter"})
+
     return tools
 
 

@@ -29,7 +29,31 @@ TRUST_POLICY = {
                 "bedrock-agentcore:InvokeMemory",
                 "bedrock-agentcore:RetrieveMemoryRecords",
             ],
+            "Resource": "arn:aws:bedrock-agentcore:*:*:memory/*",
+        {
+            # Browser 工具所需权限
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:InvokeBrowser",
+            ],
             "Resource": "*",
+        },
+        {
+            # Code Interpreter 工具所需权限
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:InvokeCodeInterpreter",
+            ],
+            "Resource": "*",
+        },
+        {
+            # Gateway 工具所需权限（可选，接入企业 MCP server 时需要）
+            "Effect": "Allow",
+            "Action": [
+                "bedrock-agentcore:InvokeGateway",
+            ],
+            "Resource": "*",
+        },
         },
             "Action": "sts:AssumeRole",
         }
