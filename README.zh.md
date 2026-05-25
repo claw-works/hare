@@ -97,7 +97,18 @@ uv run python scripts/create_memory.py
 - **长期记忆**：跨 session 提炼的关键信息（用户偏好、项目背景等），语义召回
 - 客户端每次只传当前这轮消息，Harness 在推理前自动注入相关记忆
 
-### 5. 接入远端工具（可选）
+### 5. 启用 Browser 和 Code Interpreter（推荐）
+
+AgentCore 提供内置的浏览器工具和代码解释器工具。创建并绑定到 Harness 后，AI 可以直接在服务端浏览网页、执行代码——本地客户端无需任何改动。
+
+```bash
+uv run python scripts/create_tools.py
+# 自动创建 Browser + Code Interpreter 资源并绑定到 Harness
+```
+
+绑定后 AI 可以：浏览网页获取实时信息、在服务端 microVM 里运行 Python/Shell 代码、直接返回执行结果。完全在云端发生，本地无感知。
+
+### 6. 接入远端工具（可选）
 
 在 AWS Console → AgentCore → Gateways 创建 Gateway，注册企业 MCP server（Jira / ERP / Slack 等）。
 

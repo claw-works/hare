@@ -100,6 +100,19 @@ uv run python scripts/create_memory.py
 
 ### 5. Connect Remote Tools (Optional)
 
+### 5. Enable Browser & Code Interpreter (Recommended)
+
+AgentCore provides built-in Browser and Code Interpreter tools. Once created and bound to the Harness, the AI can browse the web and execute code directly on the server side — no local client changes needed.
+
+```bash
+uv run python scripts/create_tools.py
+# Creates AgentCore Browser + Code Interpreter resources and binds them to the Harness
+```
+
+The AI can then browse the web, run Python/shell code in the server-side microVM, and return results directly — all without touching the local client.
+
+### 6. Connect Remote Tools (Optional)
+
 In AWS Console → AgentCore → Gateways, create a Gateway and register enterprise MCP servers (Jira / ERP / Slack, etc.).
 
 After registration, add the Gateway ARN to the `tools.yaml` template and distribute to employees:
