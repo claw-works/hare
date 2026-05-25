@@ -97,6 +97,11 @@ async def invoke_with_tool_loop(
     - session_id 相同的调用在服务端自动续上下文，无需客户端维护历史
     - actor_id 用于多用户场景，Memory 按 actorId 隔离不同用户的记忆
 
+    Harness streaming 特性：
+    - 服务端工具（内置 shell 等）的调用和结果都在同一次 streaming response 中返回
+    - 一次 streaming 可能包含多个 message 段：assistant(tool_use) → user(tool_result) → assistant(end_turn)
+    - 第三段（最终回答）可能没有 contentBlockStart，直接是 contentBlockDelta
+
     Yields:
       {"type": "text",        "content": str}
       {"type": "tool_call",   "name": str}
@@ -107,13 +112,10 @@ async def invoke_with_tool_loop(
     harness_arn = os.environ["HARNESS_ARN"]
     all_tools = _build_all_tools()
 
-    # 第一轮：只传当前用户消息，Memory 帮你补历史
-    # tool_use 续轮：必须传 [assistant+toolUse, user+toolResult] 配对，
-    #   不能只传 toolResult（因为 Memory 恢复的历史里没有这次 invoke 产生的 toolUse）
-    # 因此 tool_use 循环内维护一个局部 messages 列表（仅当前 invoke 轮次）
+    # tool_use 续轮时维护的局部 messages（仅针对本地工具需要再次 invoke 的情况）
     current_content: list[dict[str, Any]] = [{"text": message}]
     current_role = "user"
-    local_messages: list[dict[str, Any]] = []  # 当前 invoke 产生的 toolUse/toolResult 配对
+    local_messages: list[dict[str, Any]] = []
 
     while True:
         invoke_kwargs: dict[str, Any] = dict(
@@ -131,23 +133,33 @@ async def invoke_with_tool_loop(
         full_text = ""
         tool_uses: list[dict[str, Any]] = []
         current_tool: dict[str, Any] | None = None
-        stop_reason = "end_turn"
         assistant_content: list[dict[str, Any]] = []
+        # 追踪当前 message 段的角色，只有 assistant 段的 text 才输出给用户
+        msg_role: str | None = None
+        final_stop_reason = "end_turn"
 
         for event in response["stream"]:
-            if "contentBlockStart" in event:
+            if "messageStart" in event:
+                msg_role = event["messageStart"].get("role")
+
+            elif "contentBlockStart" in event:
                 start = event["contentBlockStart"].get("start", {})
                 if "toolUse" in start:
                     tool_type = start["toolUse"].get("type", "tool_use")
                     tool_name = start["toolUse"]["name"]
                     if tool_type == "tool_use":
-                        # inline_function：本地执行
-                        current_tool = {
-                            "toolUseId": start["toolUse"]["toolUseId"],
-                            "name": tool_name,
-                            "input_json": "",
-                        }
-                        yield {"type": "tool_call", "name": tool_name}
+                        from hare.tools import TOOL_REGISTRY
+                        is_local = tool_name in TOOL_REGISTRY
+                        is_mcp = tool_name.startswith("mcp__")
+                        if is_local or is_mcp:
+                            current_tool = {
+                                "toolUseId": start["toolUse"]["toolUseId"],
+                                "name": tool_name,
+                                "input_json": "",
+                            }
+                            yield {"type": "tool_call", "name": tool_name}
+                        else:
+                            yield {"type": "server_tool_call", "name": tool_name, "tool_type": "server_tool_use"}
                     else:
                         # server_tool_use / mcp_tool_use：服务端执行，只显示状态
                         yield {"type": "server_tool_call", "name": tool_name, "tool_type": tool_type}
@@ -155,9 +167,11 @@ async def invoke_with_tool_loop(
             elif "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"].get("delta", {})
                 if "text" in delta:
-                    text = delta["text"]
-                    full_text += text
-                    yield {"type": "text", "content": text}
+                    # 只收集 assistant 段的文字（跳过 user/tool_result 段的内容）
+                    if msg_role == "assistant":
+                        text = delta["text"]
+                        full_text += text
+                        yield {"type": "text", "content": text}
                 elif "toolUse" in delta and current_tool:
                     current_tool["input_json"] += delta["toolUse"].get("input", "")
 
@@ -169,11 +183,7 @@ async def invoke_with_tool_loop(
                         input_data = {}
                     current_tool["input"] = input_data
 
-                    # 只把本地注册表里有的工具加进 tool_uses（让本地执行）
-                    # Harness 内置工具（如 shell、code_interpreter）不在注册表里，
-                    # 它们由 Harness 服务端直接执行，stopReason=tool_result 时自动续轮
                     from hare.tools import TOOL_REGISTRY
-                    from hare.mcp_client import get_mcp_manager as _get_mcp_mgr
                     is_local = current_tool["name"] in TOOL_REGISTRY
                     is_mcp = current_tool["name"].startswith("mcp__")
                     if is_local or is_mcp:
@@ -185,24 +195,15 @@ async def invoke_with_tool_loop(
                                 "input": input_data,
                             }
                         })
-                    # else: Harness 内置工具，跳过本地执行
                     current_tool = None
 
             elif "messageStop" in event:
-                stop_reason = event["messageStop"].get("stopReason", "end_turn")
-                # 同一次 streaming 可能包含多个 message 段（tool_use → tool_result → end_turn）
-                # 一旦遇到 end_turn，整个对话在服务端已完成，不需要再循环
-                if stop_reason == "end_turn":
-                    break  # 直接跳出 for 循环，后面判断会 yield done
+                final_stop_reason = event["messageStop"].get("stopReason", "end_turn")
 
-        if stop_reason == "tool_use" and not tool_uses:
-            # tool_use 但 tool_uses 为空 = Harness 内置工具（已跳过本地执行）
-            # 直接继续循环，等待服务端处理完后的 tool_result
-            current_content = [{"text": ""}]
-            current_role = "user"
-            local_messages = []
-        elif stop_reason == "tool_use" and tool_uses:
-            # 本地工具执行，下一轮只传 toolResult（不传历史）
+        # for 循环结束：整个 streaming response 已消费完毕
+        # 检查是否有需要本地执行的工具
+        if tool_uses:
+            # 本地工具需要执行后再次 invoke
             current_content = []
             for tool in tool_uses:
                 allowed = await confirm_tool_call(tool["name"], tool["input"])
@@ -221,8 +222,6 @@ async def invoke_with_tool_loop(
                         "status": "error" if "error" in result else "success",
                     }
                 })
-            # 把本次 invoke 的 assistant toolUse 加入局部 messages，
-            # 让下一轮的 toolResult 能和它配对
             if assistant_content:
                 if full_text:
                     assistant_content.insert(0, {"text": full_text})
@@ -230,15 +229,7 @@ async def invoke_with_tool_loop(
             current_role = "user"
             tool_uses = []
             full_text = ""
-        elif stop_reason == "tool_result":
-            # 服务端工具（server_tool_use）执行完毕，Harness 把结果注入后
-            # 需要继续循环，让模型看到结果后再推理输出最终回答
-            # 下一轮只传一个空的 user 消息触发继续推理
-            current_content = [{"text": ""}]
-            current_role = "user"
-            local_messages = []
-            tool_uses = []
-            full_text = ""
         else:
+            # 没有本地工具需要执行 → 对话完成（服务端工具已在 streaming 中处理完毕）
             yield {"type": "done", "full_text": full_text}
             break
