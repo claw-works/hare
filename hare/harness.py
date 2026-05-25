@@ -168,14 +168,24 @@ async def invoke_with_tool_loop(
                     except json.JSONDecodeError:
                         input_data = {}
                     current_tool["input"] = input_data
-                    tool_uses.append(current_tool)
-                    assistant_content.append({
-                        "toolUse": {
-                            "toolUseId": current_tool["toolUseId"],
-                            "name": current_tool["name"],
-                            "input": input_data,
-                        }
-                    })
+
+                    # 只把本地注册表里有的工具加进 tool_uses（让本地执行）
+                    # Harness 内置工具（如 shell、code_interpreter）不在注册表里，
+                    # 它们由 Harness 服务端直接执行，stopReason=tool_result 时自动续轮
+                    from hare.tools import TOOL_REGISTRY
+                    from hare.mcp_client import get_mcp_manager as _get_mcp_mgr
+                    is_local = current_tool["name"] in TOOL_REGISTRY
+                    is_mcp = current_tool["name"].startswith("mcp__")
+                    if is_local or is_mcp:
+                        tool_uses.append(current_tool)
+                        assistant_content.append({
+                            "toolUse": {
+                                "toolUseId": current_tool["toolUseId"],
+                                "name": current_tool["name"],
+                                "input": input_data,
+                            }
+                        })
+                    # else: Harness 内置工具，跳过本地执行
                     current_tool = None
 
             elif "messageStop" in event:
