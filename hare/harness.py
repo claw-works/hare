@@ -190,6 +190,10 @@ async def invoke_with_tool_loop(
 
             elif "messageStop" in event:
                 stop_reason = event["messageStop"].get("stopReason", "end_turn")
+                # 同一次 streaming 可能包含多个 message 段（tool_use → tool_result → end_turn）
+                # 一旦遇到 end_turn，整个对话在服务端已完成，不需要再循环
+                if stop_reason == "end_turn":
+                    break  # 直接跳出 for 循环，后面判断会 yield done
 
         if stop_reason == "tool_use" and not tool_uses:
             # tool_use 但 tool_uses 为空 = Harness 内置工具（已跳过本地执行）
