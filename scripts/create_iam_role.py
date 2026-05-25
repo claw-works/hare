@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """One-time script to create the IAM execution role for Hare Harness."""
 import json
 import os
@@ -6,7 +7,11 @@ import time
 import boto3
 from dotenv import load_dotenv
 
-load_dotenv()
+# 从 ~/.hare/.env 加载（如果存在）
+from pathlib import Path
+env_file = Path.home() / ".hare" / ".env"
+if env_file.exists():
+    load_dotenv(env_file)
 
 ROLE_NAME = "hare-harness-execution-role"
 REGION = os.environ.get("AWS_REGION", "us-west-2")
@@ -20,56 +25,7 @@ TRUST_POLICY = {
             "Principal": {
                 "Service": "bedrock-agentcore.amazonaws.com"
             },
-        {
-            "Effect": "Allow",
-            "Action": [
-                "bedrock-agentcore:ListEvents",
-                "bedrock-agentcore:GetMemory",
-                "bedrock-agentcore:CreateEvent",
-                "bedrock-agentcore:InvokeMemory",
-                "bedrock-agentcore:RetrieveMemoryRecords",
-            ],
-            "Resource": "arn:aws:bedrock-agentcore:*:*:memory/*",
-        {
-            # Browser 工具所需权限
-            "Effect": "Allow",
-            "Action": [
-                "bedrock-agentcore:InvokeBrowser",
-            ],
-            "Resource": "*",
-        },
-        {
-            # Code Interpreter 工具所需权限
-            "Effect": "Allow",
-            "Action": [
-                "bedrock-agentcore:InvokeCodeInterpreter",
-            ],
-            "Resource": "*",
-        },
-        {
-            # Gateway 工具所需权限（可选，接入企业 MCP server 时需要）
-            "Effect": "Allow",
-            "Action": [
-                "bedrock-agentcore:InvokeGateway",
-            ],
-            "Resource": "*",
-        },
-        },
             "Action": "sts:AssumeRole",
-        }
-    ],
-}
-
-INLINE_POLICY = {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "bedrock:InvokeModel",
-                "bedrock:InvokeModelWithResponseStream",
-            ],
-            "Resource": "*",
         }
     ],
 }
@@ -100,13 +56,15 @@ def main():
     role_arn = resp["Role"]["Arn"]
     print(f"✅ Role 创建成功")
 
-    # 附加内联权限策略
-    iam.put_role_policy(
-        RoleName=ROLE_NAME,
-        PolicyName="hare-bedrock-invoke",
-        PolicyDocument=json.dumps(INLINE_POLICY),
-    )
-    print(f"✅ 权限策略已附加")
+    # 附加 AWS 托管策略（覆盖所有 AgentCore 权限：Browser/CodeInterpreter/Gateway/Memory 等）
+    managed_policies = [
+        "arn:aws:iam::aws:policy/BedrockAgentCoreFullAccess",
+        # Memory 存储时需要调用 Bedrock 模型
+        "arn:aws:iam::aws:policy/AmazonBedrockAgentCoreMemoryBedrockModelInferenceExecutionRolePolicy",
+    ]
+    for policy_arn in managed_policies:
+        iam.attach_role_policy(RoleName=ROLE_NAME, PolicyArn=policy_arn)
+        print(f"✅ 已附加策略: {policy_arn.split('/')[-1]}")
 
     # 等待 Role 传播（IAM 最终一致性，稍等几秒）
     print(f"⏳ 等待 Role 生效（约 10 秒）...")
@@ -118,7 +76,7 @@ def main():
 
 
 def _print_env_hint(role_arn: str):
-    print(f"\n请将以下内容写入 .env：")
+    print(f"\n请将以下内容写入 ~/.hare/.env：")
     print(f"EXECUTION_ROLE_ARN={role_arn}")
 
 
