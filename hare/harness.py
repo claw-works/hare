@@ -210,6 +210,15 @@ async def invoke_with_tool_loop(
             current_role = "user"
             tool_uses = []
             full_text = ""
+        elif stop_reason == "tool_result":
+            # 服务端工具（server_tool_use）执行完毕，Harness 把结果注入后
+            # 需要继续循环，让模型看到结果后再推理输出最终回答
+            # 下一轮只传一个空的 user 消息触发继续推理
+            current_content = [{"text": ""}]
+            current_role = "user"
+            local_messages = []
+            tool_uses = []
+            full_text = ""
         else:
             yield {"type": "done", "full_text": full_text}
             break
