@@ -84,6 +84,8 @@ class SessionManager:
         entry = {
             "id": session_id,
             "name": name,
+            "summary": "",
+            "turns": 0,
             "created_at": _now(),
             "updated_at": _now(),
         }
@@ -119,6 +121,27 @@ class SessionManager:
             _save_store(self._store)
             return True
         return False
+
+    def increment_turns(self, key: str) -> int:
+        """增加对话轮数，返回新的轮数。"""
+        if key in self._store["sessions"]:
+            session = self._store["sessions"][key]
+            session["turns"] = session.get("turns", 0) + 1
+            session["updated_at"] = _now()
+            _save_store(self._store)
+            return session["turns"]
+        return 0
+
+    def update_summary(self, key: str, title: str, summary: str) -> None:
+        """更新会话标题和摘要。"""
+        if key in self._store["sessions"]:
+            session = self._store["sessions"][key]
+            if title.strip():
+                session["name"] = title.strip()
+            if summary.strip():
+                session["summary"] = summary.strip()
+            session["updated_at"] = _now()
+            _save_store(self._store)
 
     # ── 兼容旧接口 ──────────────────────────────────────────────────────────
 

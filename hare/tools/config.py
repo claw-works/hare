@@ -8,6 +8,7 @@ DEFAULT_CONFIG = {
         {"name": "local_shell",      "enabled": True, "description": "在本机执行 shell 命令"},
         {"name": "local_read_file",  "enabled": True, "description": "读取本地文件"},
         {"name": "local_write_file", "enabled": True, "description": "写入本地文件"},
+        {"name": "persona_manage",   "enabled": True, "description": "管理自身人设角色"},
     ],
     "gateway_tools": [
         {
@@ -31,9 +32,18 @@ def load_tools_config() -> dict:
             pass
     return DEFAULT_CONFIG
 
+_BUILTIN_TOOLS = {"local_shell", "local_read_file", "local_write_file", "persona_manage", "coding_agent", "coding_agent_list"}
+
+
 def get_enabled_local_tools() -> list[str]:
     config = load_tools_config()
-    return [t["name"] for t in config.get("local_tools", []) if t.get("enabled", True)]
+    configured = {t["name"] for t in config.get("local_tools", [])}
+    enabled = [t["name"] for t in config.get("local_tools", []) if t.get("enabled", True)]
+    # 内置工具如果不在配置文件里，默认启用
+    for name in _BUILTIN_TOOLS:
+        if name not in configured:
+            enabled.append(name)
+    return enabled
 
 def get_gateway_tools() -> list[dict]:
     config = load_tools_config()

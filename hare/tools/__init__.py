@@ -5,12 +5,17 @@ from typing import Any, Callable
 
 from hare.tools.shell import shell_run
 from hare.tools.filesystem import read_file, write_file
+from hare.tools.persona_tool import manage_persona
+from hare.tools.acp import invoke_agent, list_agents
 from hare.tools.config import get_enabled_local_tools
 
 TOOL_REGISTRY: dict[str, Callable] = {
     "local_shell": shell_run,
     "local_read_file": read_file,
     "local_write_file": write_file,
+    "persona_manage": manage_persona,
+    "coding_agent": invoke_agent,
+    "coding_agent_list": list_agents,
 }
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
@@ -69,6 +74,84 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "content": {"type": "string", "description": "Content to write."},
                     },
                     "required": ["path", "content"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "coding_agent",
+            "description": (
+                "Delegate a coding task to a local AI coding agent (like Claude Code or Kiro). "
+                "Use this when the user asks you to write code, fix bugs, refactor, or perform any "
+                "programming task on their local project. The agent runs in the specified working directory "
+                "and has full access to the local filesystem."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "agent": {
+                            "type": "string",
+                            "description": "Which coding agent to use: 'claude' (Claude Code) or 'kiro' (Kiro CLI).",
+                            "enum": ["claude", "kiro"],
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "The coding task description to send to the agent. Be specific and detailed.",
+                        },
+                        "working_dir": {
+                            "type": "string",
+                            "description": "Working directory for the agent (absolute path). Defaults to the user's current project.",
+                        },
+                    },
+                    "required": ["agent", "prompt"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "coding_agent_list",
+            "description": (
+                "List available coding agents and their status (installed, enabled)."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {},
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "persona_manage",
+            "description": (
+                "Manage your own persona/identity. You can create new personas, update existing ones, "
+                "switch between them, or delete them. This is YOUR self-management tool — "
+                "use it when you want to evolve, add a new role, or when the user asks you to change personality. "
+                "Actions: list, get, create, update, switch, delete."
+            ),
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["list", "get", "create", "update", "switch", "delete"],
+                            "description": "The action to perform.",
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "Persona identifier (filename without .yaml). Required for all actions except list.",
+                        },
+                        "data": {
+                            "type": "object",
+                            "description": "Persona data for create/update. Should include: name (display name), emoji, creature, vibe, tone.",
+                        },
+                    },
+                    "required": ["action"],
                 }
             },
         }

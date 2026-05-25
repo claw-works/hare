@@ -1,22 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Session 选择器 TUI — Rich + prompt_toolkit 实现。
-
-使用方式：
-    key, session = pick_or_create_session()
-    # key: str (UUID), session: dict with id/name/messages/...
-"""
+"""Session 选择器 TUI — 支持上下箭头选择。"""
 from __future__ import annotations
 
 import sys
 from datetime import datetime
-from typing import Optional
 
 from prompt_toolkit import PromptSession as PtSession
 from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 from rich import box
 
 from hare.session import get_manager, SessionManager
@@ -25,7 +20,6 @@ console = Console()
 
 
 def _fmt_time(ts: str) -> str:
-    """将 ISO 时间格式化为人类可读。"""
     try:
         dt = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S")
         now = datetime.now()
@@ -46,13 +40,10 @@ def _fmt_time(ts: str) -> str:
         return ts
 
 
-def _render_picker(manager: SessionManager, selected_idx: int = 0) -> None:
-    """渲染 session 列表面板。"""
+def _render_picker(manager: SessionManager, selected_idx: int, sessions: list[dict]) -> None:
     console.clear()
-    sessions = manager.list_sessions()
     last_key = manager.last_active_key
 
-    # 标题
     console.print(Panel(
         "[bold green]🐇 Hare[/bold green]  [dim]选择一个会话继续，或新建会话[/dim]",
         border_style="green",
@@ -68,27 +59,26 @@ def _render_picker(manager: SessionManager, selected_idx: int = 0) -> None:
             header_style="bold dim",
             border_style="dim",
             padding=(0, 1),
-            expand=False,
+            expand=True,
         )
         table.add_column("#", style="dim", width=3, justify="right")
-        table.add_column("会话名称", min_width=20)
-        table.add_column("对话轮数", justify="right", width=8)
-        table.add_column("最近更新", width=10)
-        table.add_column("", width=4)  # 标记列
+        table.add_column("会话名称", min_width=16)
+        table.add_column("摘要", style="dim")
+        table.add_column("轮数", justify="right", width=4)
+        table.add_column("更新", width=8)
+        table.add_column("", width=4)
 
         for i, s in enumerate(sessions):
-            # 找到该 session 的 key
             key = _find_key(manager, s["id"])
             num = str(i + 1)
             name = s.get("name", "未命名")
-            # messages 里 role=user 的数量 = 对话轮数
-            turns = sum(1 for m in s.get("messages", []) if m.get("role") == "user")
+            summary = s.get("summary", "")
+            turns = str(s.get("turns", 0))
             updated = _fmt_time(s.get("updated_at", ""))
 
-            # 标记最近使用
             mark = ""
             if key == last_key:
-                mark = "[green]◀ 上次[/green]"
+                mark = "[green]◀[/green]"
 
             if i == selected_idx:
                 row_style = "bold green on dark_green"
@@ -97,25 +87,27 @@ def _render_picker(manager: SessionManager, selected_idx: int = 0) -> None:
                 row_style = ""
                 name_text = f"  {name}"
 
-            table.add_row(num, name_text, str(turns), updated, mark, style=row_style)
+            # 摘要过长截断
+            if len(summary) > 40:
+                summary = summary[:38] + "…"
+
+            table.add_row(num, name_text, summary, turns, updated, mark, style=row_style)
 
         console.print(table)
 
-    # 操作提示
     console.print(
         "\n  [dim]"
-        "[bold white]数字键[/bold white] 选择  "
+        "[bold white]↑↓[/bold white] 选择  "
+        "[bold white]Enter[/bold white] 确认  "
         "[bold white]N[/bold white] 新建  "
         "[bold white]D[/bold white] 删除  "
         "[bold white]R[/bold white] 重命名  "
-        "[bold white]Enter[/bold white] 进入上次会话  "
         "[bold white]Q[/bold white] 退出"
         "[/dim]\n"
     )
 
 
 def _find_key(manager: SessionManager, session_id: str) -> str | None:
-    """通过 session_id 找到对应的 UUID key。"""
     for k, v in manager._store["sessions"].items():
         if v["id"] == session_id:
             return k
@@ -123,27 +115,46 @@ def _find_key(manager: SessionManager, session_id: str) -> str | None:
 
 
 async def pick_or_create_session() -> tuple[str, dict]:
-    """
-    显示 session 选择器，返回 (key, session_dict)。
-    key: UUID str（用于 SessionManager 索引）
-    session_dict: 含 id/name/messages/...
-    """
     manager = get_manager()
     sessions = manager.list_sessions()
 
-    # 如果完全没有 session，直接新建一个默认的
     if not sessions:
         console.print("\n  [dim]首次启动，自动创建默认会话...[/dim]")
         key, session = manager.new_session("默认会话")
         return key, session
 
-    pt = PtSession()
+    # 找到上次活跃的 session 索引作为默认选中
+    last_key = manager.last_active_key
     selected_idx = 0
-    sessions = manager.list_sessions()  # 按 updated_at 倒序
+    for i, s in enumerate(sessions):
+        if _find_key(manager, s["id"]) == last_key:
+            selected_idx = i
+            break
+
+    # 用于从 key binding 传递动作
+    action: dict = {"type": None}
+
+    kb = KeyBindings()
+
+    @kb.add(Keys.Up)
+    def _up(event):
+        action["type"] = "up"
+        event.app.exit(result="")
+
+    @kb.add(Keys.Down)
+    def _down(event):
+        action["type"] = "down"
+        event.app.exit(result="")
+
+    @kb.add(Keys.Enter)
+    def _enter(event):
+        action["type"] = "select"
+        event.app.exit(result="")
+
+    pt = PtSession(key_bindings=kb)
 
     while True:
-        _render_picker(manager, selected_idx)
-        sessions = manager.list_sessions()  # 每次刷新
+        _render_picker(manager, selected_idx, sessions)
 
         try:
             raw = (await pt.prompt_async(HTML("  <ansigreen><b>操作</b></ansigreen> > "))).strip().lower()
@@ -151,17 +162,30 @@ async def pick_or_create_session() -> tuple[str, dict]:
             console.print("\n[dim]再见！[/dim]")
             sys.exit(0)
 
-        if not raw:
-            # 直接回车 → 进入上次使用的 session
-            key = manager.last_active_key
-            if key and manager.get_session(key):
+        # 处理 key binding 动作
+        if action["type"] == "up":
+            action["type"] = None
+            selected_idx = (selected_idx - 1) % len(sessions) if sessions else 0
+            continue
+        elif action["type"] == "down":
+            action["type"] = None
+            selected_idx = (selected_idx + 1) % len(sessions) if sessions else 0
+            continue
+        elif action["type"] == "select":
+            action["type"] = None
+            if sessions:
+                selected = sessions[selected_idx]
+                key = _find_key(manager, selected["id"])
                 session = manager.activate(key)
                 console.clear()
                 return key, session
-            elif sessions:
-                # fallback: 进入列表第一个
-                first = sessions[0]
-                key = _find_key(manager, first["id"])
+            continue
+
+        if not raw:
+            # 回车（无 key binding 触发时的 fallback）
+            if sessions:
+                selected = sessions[selected_idx]
+                key = _find_key(manager, selected["id"])
                 session = manager.activate(key)
                 console.clear()
                 return key, session
@@ -171,7 +195,6 @@ async def pick_or_create_session() -> tuple[str, dict]:
             sys.exit(0)
 
         elif raw == "n":
-            # 新建 session
             console.print()
             try:
                 name_raw = (await pt.prompt_async(
@@ -184,7 +207,6 @@ async def pick_or_create_session() -> tuple[str, dict]:
             return key, session
 
         elif raw == "d":
-            # 删除 session
             if not sessions:
                 continue
             console.print()
@@ -206,11 +228,11 @@ async def pick_or_create_session() -> tuple[str, dict]:
                         key, session = manager.new_session("默认会话")
                         console.clear()
                         return key, session
+                    selected_idx = min(selected_idx, len(sessions) - 1)
             except ValueError:
                 pass
 
         elif raw == "r":
-            # 重命名
             if not sessions:
                 continue
             console.print()
@@ -225,11 +247,11 @@ async def pick_or_create_session() -> tuple[str, dict]:
                     )).strip()
                     key_to_rename = _find_key(manager, sessions[idx]["id"])
                     manager.rename_session(key_to_rename, new_name)
+                    sessions = manager.list_sessions()
             except (ValueError, EOFError, KeyboardInterrupt):
                 pass
 
         else:
-            # 数字选择
             try:
                 idx = int(raw) - 1
                 if 0 <= idx < len(sessions):

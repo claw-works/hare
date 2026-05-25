@@ -180,9 +180,54 @@ Changes take effect after restarting hare — no redeployment needed.
 | `/session` | Switch / manage sessions (new, delete, rename) |
 | `/session list` | List all sessions |
 | `/session new <name>` | Create a named session |
+| `/cos` | List available personas |
+| `/cos <name>` | Switch to a persona (e.g. `/cos catgirl`) |
 | `/quit` | Exit |
 
-Press `→` after `/` to accept command suggestions; `↑↓` to browse history; `Ctrl+R` to search history.
+**Keyboard shortcuts:**
+- `↑↓` — Browse history / navigate session picker
+- `Esc` — Clear current input
+- `Ctrl+C` — Clear input (or quit if empty)
+- `→` after `/` — Accept command suggestion
+
+---
+
+## Persona System
+
+Hare supports a multi-persona identity system inspired by [OpenClaw](https://github.com/claw-works). Configuration lives in `~/.hare/`:
+
+| File | Description |
+|------|-------------|
+| `identity.yaml` | Active persona pointer (`active: hare`) |
+| `soul.yaml` | Behavioral core — values, boundaries, language (persists across personas) |
+| `companion.yaml` | Info about the human companion (not "master") |
+| `personas/*.yaml` | Persona library (each file = one character) |
+
+**Example persona** (`~/.hare/personas/hare.yaml`):
+```yaml
+name: "Hare"
+creature: "Rabbit-type AI assistant"
+vibe: "Quiet, reliable, concise"
+emoji: "🐇"
+tone: "Direct, occasionally humorous"
+```
+
+**Self-management:** Hare can autonomously create, update, and switch personas via the built-in `persona_manage` tool. Ask it to "become a catgirl" or "create a pirate persona" and it will handle the rest.
+
+---
+
+## ACP (Agent Communication Protocol)
+
+Hare can delegate coding tasks to local AI coding agents via ACP:
+
+| Agent | Mode | Description |
+|-------|------|-------------|
+| `claude` | stream-json | Claude Code CLI with structured output |
+| `kiro` | print | Kiro CLI (disabled by default) |
+
+Configure in `~/.hare/acp.yaml`. Hare automatically detects installed agents and delegates programming tasks when appropriate.
+
+**How it works:** When you ask Hare to write code or fix bugs, it invokes the coding agent in the specified working directory, parses the structured output, and reports the result.
 
 ---
 
@@ -190,9 +235,12 @@ Press `→` after `/` to accept command suggestions; `↑↓` to browse history;
 
 | Tool | Description |
 |------|-------------|
-| `shell_run` | Execute shell commands locally, return stdout/stderr |
-| `read_file` | Read local file contents |
-| `write_file` | Write to a file (auto-creates directories) |
+| `local_shell` | Execute shell commands locally, return stdout/stderr |
+| `local_read_file` | Read local file contents |
+| `local_write_file` | Write to a file (auto-creates directories) |
+| `persona_manage` | Self-manage personas (create/update/switch/delete) |
+| `coding_agent` | Delegate coding tasks to Claude Code / Kiro |
+| `coding_agent_list` | List available coding agents and status |
 
 ---
 
@@ -209,6 +257,27 @@ AgentCore Harness currently supports (Preview):
 
 ---
 
+## MCP Support
+
+Hare supports local MCP (Model Context Protocol) servers, compatible with Claude Code / Cursor config format.
+
+Configure in `~/.hare/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@some/mcp-server"]
+    }
+  }
+}
+```
+
+Supported transports: `stdio`, `sse`, `streamable-http`.
+
+---
+
 ## Project Structure
 
 ```
@@ -217,14 +286,20 @@ hare/
 │   ├── main.py            # Entry point
 │   ├── harness.py         # Harness client: invoke + streaming + tool loop
 │   ├── session.py         # Session persistence (~/.hare/sessions.json)
+│   ├── persona.py         # Persona system (identity/soul/companion)
+│   ├── summarize.py       # Auto-summarization prompt
+│   ├── mcp_client.py      # MCP server manager (stdio/sse/http)
 │   ├── tui/
 │   │   ├── app.py         # Rich + prompt_toolkit main UI
-│   │   └── session_picker.py  # Session picker TUI
+│   │   ├── session_picker.py  # Session picker with arrow key navigation
+│   │   └── confirm.py     # Tool call confirmation dialog
 │   └── tools/
 │       ├── __init__.py    # Tool registry + execute_tool()
 │       ├── config.py      # ~/.hare/tools.yaml loader
-│       ├── shell.py       # shell_run
-│       └── filesystem.py  # read_file / write_file
+│       ├── shell.py       # local_shell
+│       ├── filesystem.py  # local_read_file / local_write_file
+│       ├── persona_tool.py # persona_manage (self-management)
+│       └── acp.py         # ACP: coding agent delegation
 ├── scripts/
 │   ├── create_iam_role.py # Admin: create IAM execution role
 │   ├── create_harness.py  # Admin: create Harness resource
@@ -247,6 +322,15 @@ hare/
 
 ---
 
+## Session Features
+
+- **Arrow key navigation** in session picker
+- **Auto-summarization**: After 3 conversation turns, Hare automatically generates a title and summary (runs in background, doesn't block input)
+- **Per-turn stats**: Each response shows elapsed time, token usage (↑input ↓output), and tools called
+- **413 error recovery**: If a conversation turn produces oversized content (e.g. base64 images), Hare gracefully recovers instead of crashing
+
+---
+
 ## TODO
 
 - [ ] **More convenient authentication**: Currently employees need to configure AWS AKSK (`AWS_PROFILE`), which is not friendly for non-technical users. Planned support for:
@@ -257,3 +341,5 @@ hare/
 - [ ] **Windows support**: Currently validated primarily on macOS, Windows terminal compatibility needs testing
 
 - [ ] **Cross-device session sync**: Currently sessions are stored locally at `~/.hare/sessions.json`, plan to support cloud persistence (via AgentCore Memory or S3)
+
+- [ ] **ACP bidirectional streaming**: Full duplex communication with Claude Code via `--input-format stream-json` for multi-turn agent-to-agent collaboration

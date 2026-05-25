@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, AsyncGenerator
 
 import boto3
+from botocore.exceptions import ClientError
 
 from hare.tools import TOOL_DEFINITIONS, execute_tool
 from hare.tools.config import get_enabled_local_tools, get_gateway_tools
 from hare.mcp_client import get_mcp_manager
+from hare.persona import build_persona_prompt
 from hare.tui.confirm import confirm_tool_call
 
 
@@ -60,8 +63,7 @@ def _build_all_tools() -> list[dict[str, Any]]:
     return tools
 
 
-SYSTEM_PROMPT = [{"text": """你是 Hare，一个运行在用户本地机器上的 AI 助手。
-
+_TOOLS_PROMPT = """
 你有两类工具，必须根据用途严格区分：
 
 **1. 用户本地工具**（只用于访问用户的本地机器）：
@@ -80,8 +82,14 @@ SYSTEM_PROMPT = [{"text": """你是 Hare，一个运行在用户本地机器上�
 1. 当用户询问本地文件、目录内容时，优先使用 shell_run 或 read_file 工具直接查找，不要让用户自己去跑命令
 2. 当用户需要执行系统操作时，直接用 shell_run 执行，返回结果
 3. 你运行在用户的本地机器上，有权限访问用户的文件系统
-4. 默认用中文回复用户
-"""}]
+4. 你拥有 persona_manage 工具，可以自主管理自己的人格角色。当用户要求你变换身份、创建新角色、或你觉得需要进化时，直接使用它
+5. 你拥有 coding_agent 工具，可以委派编程任务给本地 coding agent（如 Claude Code、Kiro）。当用户需要写代码、修bug、重构项目时，使用 coding_agent 把任务交给专业编程工具执行
+"""
+
+
+def _build_system_prompt() -> list[dict[str, str]]:
+    persona_text = build_persona_prompt()
+    return [{"text": f"{persona_text}\n\n{_TOOLS_PROMPT}"}]
 
 
 async def invoke_with_tool_loop(
@@ -106,29 +114,49 @@ async def invoke_with_tool_loop(
       {"type": "text",        "content": str}
       {"type": "tool_call",   "name": str}
       {"type": "tool_result", "name": str, "result": dict}
-      {"type": "done",        "full_text": str}
+      {"type": "done",        "full_text": str, "stats": dict}
     """
     client = _get_client()
     harness_arn = os.environ["HARNESS_ARN"]
     all_tools = _build_all_tools()
+    system_prompt = _build_system_prompt()
 
     # tool_use 续轮时维护的局部 messages（仅针对本地工具需要再次 invoke 的情况）
     current_content: list[dict[str, Any]] = [{"text": message}]
     current_role = "user"
     local_messages: list[dict[str, Any]] = []
 
+    # 统计信息
+    turn_start = time.time()
+    total_input_tokens = 0
+    total_output_tokens = 0
+    invoke_count = 0
+    tools_called: list[dict[str, Any]] = []
+
     while True:
+        invoke_count += 1
         invoke_kwargs: dict[str, Any] = dict(
             harnessArn=harness_arn,
             runtimeSessionId=session_id,
             messages=local_messages + [{"role": current_role, "content": current_content}],
-            systemPrompt=SYSTEM_PROMPT,
+            systemPrompt=system_prompt,
             tools=all_tools,
         )
         if actor_id:
             invoke_kwargs["actorId"] = actor_id
 
-        response = client.invoke_harness(**invoke_kwargs)
+        try:
+            response = client.invoke_harness(**invoke_kwargs)
+        except ClientError as e:
+            code = e.response["Error"].get("Code", "")
+            if "413" in str(e) or "PayloadTooLarge" in code:
+                yield {"type": "error", "message": "上轮对话内容过大（如图片 base64），Memory 写入失败。已跳过该轮记忆，请继续对话。"}
+                # 清空本地消息历史，让 Memory 侧的旧上下文接管
+                local_messages = []
+                current_content = [{"text": "(上轮因内容过大被跳过) " + message if invoke_count == 1 else "(继续)"}]
+                current_role = "user"
+                continue
+            raise
 
         full_text = ""
         tool_uses: list[dict[str, Any]] = []
@@ -159,9 +187,11 @@ async def invoke_with_tool_loop(
                             }
                             yield {"type": "tool_call", "name": tool_name}
                         else:
+                            tools_called.append({"name": tool_name, "elapsed": 0, "ok": True, "server": True})
                             yield {"type": "server_tool_call", "name": tool_name, "tool_type": "server_tool_use"}
                     else:
                         # server_tool_use / mcp_tool_use：服务端执行，只显示状态
+                        tools_called.append({"name": tool_name, "elapsed": 0, "ok": True, "server": True})
                         yield {"type": "server_tool_call", "name": tool_name, "tool_type": tool_type}
 
             elif "contentBlockDelta" in event:
@@ -182,20 +212,20 @@ async def invoke_with_tool_loop(
                     except json.JSONDecodeError:
                         input_data = {}
                     current_tool["input"] = input_data
-
-                    from hare.tools import TOOL_REGISTRY
-                    is_local = current_tool["name"] in TOOL_REGISTRY
-                    is_mcp = current_tool["name"].startswith("mcp__")
-                    if is_local or is_mcp:
-                        tool_uses.append(current_tool)
-                        assistant_content.append({
-                            "toolUse": {
-                                "toolUseId": current_tool["toolUseId"],
-                                "name": current_tool["name"],
-                                "input": input_data,
-                            }
-                        })
+                    tool_uses.append(current_tool)
+                    assistant_content.append({
+                        "toolUse": {
+                            "toolUseId": current_tool["toolUseId"],
+                            "name": current_tool["name"],
+                            "input": input_data,
+                        }
+                    })
                     current_tool = None
+
+            elif "metadata" in event:
+                usage = event["metadata"].get("usage", {})
+                total_input_tokens += usage.get("inputTokens", 0)
+                total_output_tokens += usage.get("outputTokens", 0)
 
             elif "messageStop" in event:
                 final_stop_reason = event["messageStop"].get("stopReason", "end_turn")
@@ -206,6 +236,7 @@ async def invoke_with_tool_loop(
             # 本地工具需要执行后再次 invoke
             current_content = []
             for tool in tool_uses:
+                tool_start = time.time()
                 allowed = await confirm_tool_call(tool["name"], tool["input"])
                 if allowed:
                     if tool["name"].startswith("mcp__"):
@@ -214,6 +245,8 @@ async def invoke_with_tool_loop(
                         result = await execute_tool(tool["name"], tool["input"])
                 else:
                     result = {"error": f"用户拒绝执行工具 {tool['name']}"}
+                tool_elapsed = time.time() - tool_start
+                tools_called.append({"name": tool["name"], "elapsed": tool_elapsed, "ok": "error" not in result})
                 yield {"type": "tool_result", "name": tool["name"], "result": result}
                 current_content.append({
                     "toolResult": {
@@ -231,5 +264,12 @@ async def invoke_with_tool_loop(
             full_text = ""
         else:
             # 没有本地工具需要执行 → 对话完成（服务端工具已在 streaming 中处理完毕）
-            yield {"type": "done", "full_text": full_text}
+            stats = {
+                "elapsed": time.time() - turn_start,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "invoke_count": invoke_count,
+                "tools": tools_called,
+            }
+            yield {"type": "done", "full_text": full_text, "stats": stats}
             break

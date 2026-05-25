@@ -179,9 +179,54 @@ gateway_tools:
 | `/session` | 切换 / 管理会话（新建、删除、重命名） |
 | `/session list` | 列出所有会话 |
 | `/session new <名称>` | 新建命名会话 |
+| `/cos` | 列出可用人设 |
+| `/cos <名称>` | 切换人设（如 `/cos catgirl`） |
 | `/quit` | 退出 |
 
-输入 `/` 后按 `→` 接受命令联想；`↑↓` 翻历史；`Ctrl+R` 搜索历史。
+**快捷键：**
+- `↑↓` — 翻历史 / 会话选择器导航
+- `Esc` — 清除当前输入
+- `Ctrl+C` — 清除输入（输入为空时退出）
+- `/` 后按 `→` — 接受命令联想
+
+---
+
+## 人设系统
+
+Hare 支持多人格身份系统，设计灵感来自 [OpenClaw](https://github.com/claw-works)。配置存于 `~/.hare/`：
+
+| 文件 | 说明 |
+|------|------|
+| `identity.yaml` | 当前激活人格指针（`active: hare`） |
+| `soul.yaml` | 行为灵魂 — 价值观、边界、语言（跨人格不变） |
+| `companion.yaml` | 人类同伴信息（不是"主人"） |
+| `personas/*.yaml` | 人格库（每个文件 = 一个角色） |
+
+**示例人格**（`~/.hare/personas/hare.yaml`）：
+```yaml
+name: "Hare"
+creature: "兔系 AI 助手"
+vibe: "安静可靠，话不多但管用"
+emoji: "🐇"
+tone: "简洁直接，偶尔幽默"
+```
+
+**自治能力：** Hare 可以通过内置 `persona_manage` 工具自主创建、修改、切换人格。对它说"变成猫娘"或"帮我加一个海盗角色"，它会自己搞定。
+
+---
+
+## ACP（Agent 通信协议）
+
+Hare 可以将编程任务委派给本地 AI coding agent：
+
+| Agent | 模式 | 说明 |
+|-------|------|------|
+| `claude` | stream-json | Claude Code CLI，结构化输出 |
+| `kiro` | print | Kiro CLI（默认关闭） |
+
+配置在 `~/.hare/acp.yaml`。Hare 自动检测已安装的 agent，在需要编程时自动委派任务。
+
+**工作方式：** 当你让 Hare 写代码或修 bug 时，它会在指定工作目录调用 coding agent，解析结构化输出后汇报结果。
 
 ---
 
@@ -189,9 +234,12 @@ gateway_tools:
 
 | 工具 | 描述 |
 |------|------|
-| `shell_run` | 在本机执行 shell 命令，返回 stdout/stderr |
-| `read_file` | 读取本地文件内容 |
-| `write_file` | 写入文件（自动创建目录） |
+| `local_shell` | 在本机执行 shell 命令，返回 stdout/stderr |
+| `local_read_file` | 读取本地文件内容 |
+| `local_write_file` | 写入文件（自动创建目录） |
+| `persona_manage` | 自主管理人格（创建/更新/切换/删除） |
+| `coding_agent` | 委派编程任务给 Claude Code / Kiro |
+| `coding_agent_list` | 列出可用 coding agent 及状态 |
 
 ---
 
@@ -208,6 +256,27 @@ AgentCore Harness 目前（Preview）支持：
 
 ---
 
+## MCP 支持
+
+Hare 支持本地 MCP（Model Context Protocol）server，兼容 Claude Code / Cursor 的配置格式。
+
+配置 `~/.hare/mcp.json`：
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@some/mcp-server"]
+    }
+  }
+}
+```
+
+支持传输方式：`stdio`、`sse`、`streamable-http`。
+
+---
+
 ## 项目结构
 
 ```
@@ -216,14 +285,20 @@ hare/
 │   ├── main.py            # 入口
 │   ├── harness.py         # Harness 客户端：invoke + streaming + tool loop
 │   ├── session.py         # Session 持久化（~/.hare/sessions.json）
+│   ├── persona.py         # 人设系统（identity/soul/companion）
+│   ├── summarize.py       # 自动摘要 prompt
+│   ├── mcp_client.py      # MCP server 管理器（stdio/sse/http）
 │   ├── tui/
 │   │   ├── app.py         # Rich + prompt_toolkit 主界面
-│   │   └── session_picker.py  # Session 选择器 TUI
+│   │   ├── session_picker.py  # 会话选择器（支持方向键导航）
+│   │   └── confirm.py     # 工具调用确认对话框
 │   └── tools/
 │       ├── __init__.py    # 工具注册表 + execute_tool()
 │       ├── config.py      # ~/.hare/tools.yaml 加载
-│       ├── shell.py       # shell_run
-│       └── filesystem.py  # read_file / write_file
+│       ├── shell.py       # local_shell
+│       ├── filesystem.py  # local_read_file / local_write_file
+│       ├── persona_tool.py # persona_manage（自治管理）
+│       └── acp.py         # ACP：coding agent 委派
 ├── scripts/
 │   ├── create_iam_role.py # 运维：创建 IAM 执行角色
 │   ├── create_harness.py  # 运维：创建 Harness 资源
@@ -246,6 +321,15 @@ hare/
 
 ---
 
+## 会话功能
+
+- **方向键导航** — 会话选择器支持 ↑↓ 选择
+- **自动摘要** — 对话 3 轮后自动生成标题和摘要（后台运行，不阻塞输入）
+- **轮次统计** — 每次回复后显示耗时、token 用量（↑输入 ↓输出）、工具调用摘要
+- **413 容错** — 对话内容过大（如 base64 图片）时优雅恢复，不会崩溃
+
+---
+
 ## TODO
 
 - [ ] **更便捷的认证方式**：当前需要员工配置 AWS AKSK（`AWS_PROFILE`），对非技术人员不友好。计划支持以下认证方式：
@@ -256,3 +340,5 @@ hare/
 - [ ] **Windows 支持**：当前主要在 macOS 验证，Windows 终端兼容性待测试
 
 - [ ] **会话跨设备同步**：当前 session 存储在本地 `~/.hare/sessions.json`，支持云端持久化（利用 AgentCore Memory 或 S3）
+
+- [ ] **ACP 双向流**：与 Claude Code 通过 `--input-format stream-json` 做全双工通信，实现 agent 间多轮协作
