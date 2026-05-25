@@ -8,6 +8,8 @@ import boto3
 
 from hare.tools import TOOL_DEFINITIONS, execute_tool
 from hare.tools.config import get_enabled_local_tools, get_gateway_tools
+from hare.mcp_client import get_mcp_manager
+from hare.tui.confirm import confirm_tool_call
 
 
 def _get_client():
@@ -38,7 +40,7 @@ def _build_inline_tools() -> list[dict[str, Any]]:
 
 
 def _build_all_tools() -> list[dict[str, Any]]:
-    """本地 inline_function + 远端 agentcore_gateway。"""
+    """本地 inline_function + 远端 agentcore_gateway + MCP tools。"""
     tools = _build_inline_tools()
     for gw in get_gateway_tools():
         auth = gw.get("auth", "awsIam")
@@ -53,6 +55,8 @@ def _build_all_tools() -> list[dict[str, Any]]:
                 }
             }
         })
+    # MCP tools
+    tools.extend(get_mcp_manager().get_tools())
     return tools
 
 
@@ -167,7 +171,14 @@ async def invoke_with_tool_loop(
             # 本地工具执行，下一轮只传 toolResult（不传历史）
             current_content = []
             for tool in tool_uses:
-                result = await execute_tool(tool["name"], tool["input"])
+                allowed = await confirm_tool_call(tool["name"], tool["input"])
+                if allowed:
+                    if tool["name"].startswith("mcp__"):
+                        result = await get_mcp_manager().call_tool_by_full_name(tool["name"], tool["input"])
+                    else:
+                        result = await execute_tool(tool["name"], tool["input"])
+                else:
+                    result = {"error": f"用户拒绝执行工具 {tool['name']}"}
                 yield {"type": "tool_result", "name": tool["name"], "result": result}
                 current_content.append({
                     "toolResult": {

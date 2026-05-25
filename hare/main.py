@@ -19,10 +19,6 @@ def _ensure_hare_dir():
         template = project_root / ".env.example"
         if template.exists():
             shutil.copy(template, env_file)
-            print(f"⚠️  已创建 {env_file}")
-            print("   请编辑该文件，填入 AWS_REGION、AWS_PROFILE、HARNESS_ARN")
-            print(f"   vi {env_file}")
-            sys.exit(1)
 
     # 检查 tools.yaml
     tools_file = HARE_DIR / "tools.yaml"
@@ -30,9 +26,8 @@ def _ensure_hare_dir():
         template = project_root / "tools.yaml.example"
         if template.exists():
             shutil.copy(template, tools_file)
-            print(f"✅ 已从模板创建 {tools_file}，可按需修改工具配置")
 
-    # 预留目录（identity/soul/skills 后续用）
+    # 预留目录
     for d in ["skills"]:
         (HARE_DIR / d).mkdir(exist_ok=True)
 
@@ -40,9 +35,26 @@ def _ensure_hare_dir():
 def main():
     _ensure_hare_dir()
 
-    # 只从 ~/.hare/.env 加载，不从项目目录加载
+    # 只从 ~/.hare/.env 加载
     from dotenv import load_dotenv
     load_dotenv(HARE_DIR / ".env")
+
+    # --setup 入口：随时可重新运行 onboarding
+    if "--setup" in sys.argv:
+        from hare.onboard import run_onboarding
+        run_onboarding()
+        return
+
+    # 首次启动自动触发：检测到 HARNESS_ARN 未配置
+    from hare.onboard import needs_onboarding
+    if needs_onboarding():
+        from hare.onboard import run_onboarding
+        run_onboarding()
+        # 重新加载 .env 以获取 onboarding 写入的值
+        load_dotenv(HARE_DIR / ".env", override=True)
+        # 如果 onboarding 后仍未配置，退出
+        if not os.environ.get("HARNESS_ARN") or "ACCOUNT_ID" in os.environ.get("HARNESS_ARN", ""):
+            return
 
     from hare.tui.app import main as run
     run()

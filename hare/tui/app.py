@@ -21,6 +21,7 @@ from rich.markdown import Markdown
 from hare.harness import invoke_with_tool_loop
 from hare.session import get_manager
 from hare.tui.session_picker import pick_or_create_session, _find_key
+from hare.mcp_client import get_mcp_manager
 
 console = Console()
 
@@ -151,6 +152,9 @@ async def run_chat() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     manager = get_manager()
+
+    # ── 初始化 MCP servers ────────────────────────────────────────────────
+    await get_mcp_manager().initialize()
 
     # ── 启动时显示 session 选择器 ────────────────────────────────────────
     session_key, session_entry = await pick_or_create_session()

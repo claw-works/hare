@@ -1,5 +1,16 @@
 # Hare 工具配置
-# 本文件可放在 ~/.hare/tools.yaml（用户级）或项目根目录（项目级）
+# 本文件放在 ~/.hare/tools.yaml
+
+# 工具调用白名单（支持 fnmatch 通配符）
+# 列表中的工具执行时不弹出确认框
+# 内置工具名格式：shell_run / read_file / write_file
+# MCP 工具名格式：mcp__<server_name>__<tool_name>
+auto_allow:
+  - "read_file"               # 只读工具直接放行
+  # - "shell_run"             # 取消注释则 shell 不再询问
+  # - "mcp__filesystem__*"    # filesystem MCP server 所有工具放行
+  # - "mcp__agentmate__*"     # agentmate MCP 所有工具放行
+  # - "*"                     # 全部放行（不推荐）
 
 local_tools:
   - name: shell_run
