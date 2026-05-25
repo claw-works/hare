@@ -191,7 +191,13 @@ async def invoke_with_tool_loop(
             elif "messageStop" in event:
                 stop_reason = event["messageStop"].get("stopReason", "end_turn")
 
-        if stop_reason == "tool_use" and tool_uses:
+        if stop_reason == "tool_use" and not tool_uses:
+            # tool_use 但 tool_uses 为空 = Harness 内置工具（已跳过本地执行）
+            # 直接继续循环，等待服务端处理完后的 tool_result
+            current_content = [{"text": ""}]
+            current_role = "user"
+            local_messages = []
+        elif stop_reason == "tool_use" and tool_uses:
             # 本地工具执行，下一轮只传 toolResult（不传历史）
             current_content = []
             for tool in tool_uses:
