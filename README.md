@@ -244,6 +244,24 @@ Configure in `~/.hare/acp.yaml`. Hare automatically detects installed agents and
 
 ---
 
+## Sub-Agent
+
+Hare can spawn independent sub-tasks using the same Harness:
+
+- `sub_task` tool — starts a child session with isolated short-term memory but shared long-term memory
+- Child session IDs use `hsub_` prefix (won't pollute the session list)
+- Useful for research, calculations, translations, or any task that doesn't need current conversation context
+
+Session ID naming convention for future multi-device sync:
+
+| Pattern | Meaning | Sync strategy |
+|---------|---------|---------------|
+| `h` + 36 chars | Primary session | Pull to local |
+| `hsub_` + prefix + uuid | Sub-task | Ignore |
+| `*_r` suffix | Recovery derivation | Follows parent |
+
+---
+
 ## Local Tools
 
 | Tool | Description |
@@ -254,6 +272,7 @@ Configure in `~/.hare/acp.yaml`. Hare automatically detects installed agents and
 | `persona_manage` | Self-manage personas (create/update/switch/delete) |
 | `coding_agent` | Delegate coding tasks to Claude Code / Kiro |
 | `coding_agent_list` | List available coding agents and status |
+| `sub_task` | Spawn an independent sub-agent for a self-contained task |
 
 ---
 
@@ -312,7 +331,8 @@ hare/
 │       ├── shell.py       # local_shell
 │       ├── filesystem.py  # local_read_file / local_write_file
 │       ├── persona_tool.py # persona_manage (self-management)
-│       └── acp.py         # ACP: coding agent delegation
+│       ├── acp.py         # ACP: coding agent delegation
+│       └── sub_agent.py   # sub_task: independent sub-agent
 ├── scripts/
 │   ├── create_iam_role.py # Admin: create IAM execution role
 │   ├── create_harness.py  # Admin: create Harness resource
@@ -338,9 +358,11 @@ hare/
 ## Session Features
 
 - **Arrow key navigation** in session picker
-- **Auto-summarization**: After 3 conversation turns, Hare automatically generates a title and summary (runs in background, doesn't block input)
+- **Search** — type `/` in session picker to filter by name/summary
+- **Session recap** — on enter/switch, shows a one-line summary of the last conversation ("📝 上次: ...")
+- **Auto-summarization**: After 3 turns (and every 5 turns thereafter), Hare generates/updates title and summary in background
 - **Per-turn stats**: Each response shows elapsed time, token usage (↑input ↓output), and tools called
-- **413 error recovery**: If a conversation turn produces oversized content (e.g. base64 images), Hare gracefully recovers instead of crashing
+- **Error recovery**: Handles 413 payload errors and corrupted Memory (auto-derives new session ID to bypass)
 
 ---
 

@@ -241,6 +241,24 @@ Hare 可以将编程任务委派给本地 AI coding agent：
 
 ---
 
+## Sub-Agent（子任务）
+
+Hare 可以在同一个 Harness 上启动独立子任务：
+
+- `sub_task` 工具 — 启动子会话，短期记忆隔离，长期记忆共享
+- 子会话 ID 以 `hsub_` 开头，不会出现在会话列表中
+- 适用于查资料、做计算、翻译等不需要当前上下文的独立任务
+
+Session ID 命名约定（为未来多端同步准备）：
+
+| 模式 | 含义 | 同步策略 |
+|------|------|---------|
+| `h` + 36位 | 主会话 | 拉到本地 |
+| `hsub_` + 前缀 + uuid | 子任务 | 忽略 |
+| `*_r` 结尾 | 修复派生 | 跟随主会话 |
+
+---
+
 ## 本地工具
 
 | 工具 | 描述 |
@@ -251,6 +269,7 @@ Hare 可以将编程任务委派给本地 AI coding agent：
 | `persona_manage` | 自主管理人格（创建/更新/切换/删除） |
 | `coding_agent` | 委派编程任务给 Claude Code / Kiro |
 | `coding_agent_list` | 列出可用 coding agent 及状态 |
+| `sub_task` | 启动独立子任务（隔离上下文，共享长期记忆） |
 
 ---
 
@@ -309,7 +328,8 @@ hare/
 │       ├── shell.py       # local_shell
 │       ├── filesystem.py  # local_read_file / local_write_file
 │       ├── persona_tool.py # persona_manage（自治管理）
-│       └── acp.py         # ACP：coding agent 委派
+│       ├── acp.py         # ACP：coding agent 委派
+│       └── sub_agent.py   # sub_task：子任务 agent
 ├── scripts/
 │   ├── create_iam_role.py # 运维：创建 IAM 执行角色
 │   ├── create_harness.py  # 运维：创建 Harness 资源
@@ -335,9 +355,11 @@ hare/
 ## 会话功能
 
 - **方向键导航** — 会话选择器支持 ↑↓ 选择
-- **自动摘要** — 对话 3 轮后自动生成标题和摘要（后台运行，不阻塞输入）
+- **搜索** — 选择器中输入 `/` 按名称/摘要过滤
+- **会话回顾** — 进入/切换会话时显示一句话上次摘要（"📝 上次: ..."）
+- **自动摘要** — 第 3 轮首次生成，之后每 5 轮更新（后台运行，不阻塞输入）
 - **轮次统计** — 每次回复后显示耗时、token 用量（↑输入 ↓输出）、工具调用摘要
-- **413 容错** — 对话内容过大（如 base64 图片）时优雅恢复，不会崩溃
+- **错误恢复** — 413 超限和 Memory 损坏均自动恢复（派生新 session ID 绕过）
 
 ---
 
