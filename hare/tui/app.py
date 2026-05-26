@@ -68,6 +68,55 @@ def _banner(session_name: str, session_id: str) -> None:
     ))
 
 
+async def _load_session_recap(session_id: str, turns: int) -> None:
+    """进入已有会话时，加载上次对话回顾。"""
+    if turns < 1:
+        return
+
+    _p = get_persona()
+    _emoji = _p.get("emoji", "🐇")
+
+    live = Live(
+        Spinner("dots", text=f" [dim]{_emoji} 回忆上次对话...[/dim]"),
+        console=console, refresh_per_second=10, transient=True,
+    )
+    live.start()
+
+    try:
+        import boto3, os
+        from dotenv import load_dotenv
+        from pathlib import Path
+        load_dotenv(Path.home() / ".hare" / ".env")
+
+        sess = boto3.Session(
+            region_name=os.environ.get("AWS_REGION", "us-west-2"),
+            profile_name=os.environ.get("AWS_PROFILE"),
+        )
+        client = sess.client("bedrock-agentcore")
+        harness_arn = os.environ["HARNESS_ARN"]
+
+        response = client.invoke_harness(
+            harnessArn=harness_arn,
+            runtimeSessionId=session_id,
+            messages=[{"role": "user", "content": [{"text": "用一句话概括我们上次聊到哪里了？不要用工具。"}]}],
+            systemPrompt=[{"text": "简洁回顾上次对话，一句话即可。不要调用任何工具。"}],
+            tools=[],
+        )
+
+        recap = ""
+        for event in response["stream"]:
+            if "contentBlockDelta" in event:
+                delta = event["contentBlockDelta"].get("delta", {})
+                if "text" in delta:
+                    recap += delta["text"]
+
+        live.stop()
+        if recap.strip():
+            console.print(f"  [dim italic]📝 上次: {recap.strip()}[/dim italic]\n")
+    except Exception:
+        live.stop()
+
+
 def _tool_line(name: str) -> None:
     console.print(f"[bold yellow]  🔧 调用工具:[/bold yellow] [yellow]{name}[/yellow]...")
 
@@ -163,13 +212,17 @@ def _sync_generate_summary(session_id: str) -> dict[str, str] | None:
         return None
 
 
-async def _stream_response(session_id: str, message: str, actor_id: str | None = None) -> None:
-    """流式输出 Harness 回复，历史由服务端 Memory 托管。"""
+async def _stream_response(session_id: str, message: str, actor_id: str | None = None) -> str | None:
+    """流式输出 Harness 回复。返回新 session_id（如果发生了 reset）或 None。"""
+    _p = get_persona()
+    _emoji = _p.get("emoji", "🐇")
+    _name = _p.get("name", "Hare")
+
     full_text = ""
     first_token = False
 
     waiting_live = Live(
-        Spinner("dots", text=" [dim]🐇 思考中...[/dim]"),
+        Spinner("dots", text=f" [dim]{_emoji} 思考中...[/dim]"),
         console=console,
         refresh_per_second=10,
         transient=True,
@@ -177,9 +230,15 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
     waiting_live.start()
     response_live: Live | None = None
 
+    new_session_id = None
+
     try:
         async for event in invoke_with_tool_loop(session_id, message, actor_id=actor_id):
-            if event["type"] == "text":
+            if event["type"] == "session_reset":
+                new_session_id = event["new_session_id"]
+                continue
+
+            elif event["type"] == "text":
                 if not first_token:
                     waiting_live.stop()
                     first_token = True
@@ -191,8 +250,7 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
                     response_live.start()
                 full_text += event["content"]
                 if response_live:
-                    _persona = get_persona()
-                    _title = f"[bold green]{_persona.get('emoji', '🐇')} {_persona.get('name', 'Hare')}[/bold green]"
+                    _title = f"[bold green]{_emoji} {_name}[/bold green]"
                     response_live.update(
                         Panel(Markdown(full_text),
                               title=_title,
@@ -207,6 +265,7 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
                 if response_live:
                     response_live.stop()
                     response_live = None
+                full_text = ""
                 _tool_line(event["name"])
 
             elif event["type"] == "server_tool_call":
@@ -235,7 +294,7 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
                 # 重启 spinner 等待重试
                 first_token = False
                 waiting_live = Live(
-                    Spinner("dots", text=" [dim]🐇 重试中...[/dim]"),
+                    Spinner("dots", text=f" [dim]{_emoji} 重试中...[/dim]"),
                     console=console, refresh_per_second=10, transient=True,
                 )
                 waiting_live.start()
@@ -247,7 +306,7 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
                 else:
                     first_token = False
                     waiting_live = Live(
-                        Spinner("dots", text=" [dim]🐇 继续思考...[/dim]"),
+                        Spinner("dots", text=f" [dim]{_emoji} 继续思考...[/dim]"),
                         console=console,
                         refresh_per_second=10,
                         transient=True,
@@ -272,6 +331,8 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
             response_live.stop()
         raise
 
+    return new_session_id
+
 
 async def run_chat() -> None:
     if hasattr(sys.stdin, "reconfigure"):
@@ -290,6 +351,7 @@ async def run_chat() -> None:
     session_name = session_entry["name"]
 
     _banner(session_name, session_id)
+    await _load_session_recap(session_id, session_entry.get("turns", 0))
 
     kb = KeyBindings()
 
@@ -351,6 +413,7 @@ async def run_chat() -> None:
             session_id = session_entry["id"]
             session_name = session_entry["name"]
             _banner(session_name, session_id)
+            await _load_session_recap(session_id, session_entry.get("turns", 0))
             continue
 
         if message.startswith("/session "):
@@ -401,7 +464,14 @@ async def run_chat() -> None:
 
         # ── 正常对话 ──────────────────────────────────────────────────────
         try:
-            await _stream_response(session_id, message)
+            new_sid = await _stream_response(session_id, message)
+            if new_sid:
+                # session_id 被重置（Memory 损坏恢复），持久化新 ID
+                session_id = new_sid
+                if session_key in manager._store["sessions"]:
+                    manager._store["sessions"][session_key]["id"] = new_sid
+                    from hare.session import _save_store
+                    _save_store(manager._store)
         except KeyboardInterrupt:
             console.print("\n[dim]（中断）[/dim]")
             continue
@@ -409,9 +479,11 @@ async def run_chat() -> None:
             console.print(f"\n[bold red]错误:[/bold red] {e}")
             continue
 
-        # 更新轮数，到达阈值时自动生成摘要
+        # 更新轮数，定期自动生成/更新摘要
         turns = manager.increment_turns(session_key)
-        if turns == AUTO_SUMMARIZE_AT:
+        session_data = manager.get_session(session_key) or {}
+        has_summary = bool(session_data.get("summary"))
+        if turns == AUTO_SUMMARIZE_AT or (turns > AUTO_SUMMARIZE_AT and (turns % 5 == 0 or not has_summary)):
             asyncio.ensure_future(_auto_summarize(session_key, session_id, manager))
 
 

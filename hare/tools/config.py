@@ -32,7 +32,7 @@ def load_tools_config() -> dict:
             pass
     return DEFAULT_CONFIG
 
-_BUILTIN_TOOLS = {"local_shell", "local_read_file", "local_write_file", "persona_manage", "coding_agent", "coding_agent_list"}
+_BUILTIN_TOOLS = {"local_shell", "local_read_file", "local_write_file", "persona_manage", "coding_agent", "coding_agent_list", "sub_task"}
 
 
 def get_enabled_local_tools() -> list[str]:

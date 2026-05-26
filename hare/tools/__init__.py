@@ -7,6 +7,7 @@ from hare.tools.shell import shell_run
 from hare.tools.filesystem import read_file, write_file
 from hare.tools.persona_tool import manage_persona
 from hare.tools.acp import invoke_agent, list_agents
+from hare.tools.sub_agent import sub_task
 from hare.tools.config import get_enabled_local_tools
 
 TOOL_REGISTRY: dict[str, Callable] = {
@@ -16,24 +17,20 @@ TOOL_REGISTRY: dict[str, Callable] = {
     "persona_manage": manage_persona,
     "coding_agent": invoke_agent,
     "coding_agent_list": list_agents,
+    "sub_task": sub_task,
 }
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "toolSpec": {
             "name": "local_shell",
-            "description": (
-                "Execute a shell command on the USER'S LOCAL MACHINE (macOS/Linux desktop) and return stdout/stderr. "
-                "Use ONLY for operations on the user's local filesystem, local processes, or local system info. "
-                "Do NOT use this for querying the Harness environment, remote servers, or cloud infrastructure — "
-                "those are handled by Harness built-in shell or other tools."
-            ),
+            "description": "Run a shell command on the user's local machine. Returns stdout/stderr.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "command": {"type": "string", "description": "The shell command to execute on the user's local machine."},
-                        "working_dir": {"type": "string", "description": "Optional working directory on the local machine.", "default": "."},
+                        "command": {"type": "string"},
+                        "working_dir": {"type": "string"},
                     },
                     "required": ["command"],
                 }
@@ -43,16 +40,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "toolSpec": {
             "name": "local_read_file",
-            "description": (
-                "Read the contents of a file on the USER'S LOCAL MACHINE. "
-                "Use ONLY for local files (e.g., ~/Documents, /Users/...). "
-                "Do NOT use for files inside the Harness environment or remote servers."
-            ),
+            "description": "Read a file from the user's local machine.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Absolute or relative file path on the user's local machine."},
+                        "path": {"type": "string"},
                     },
                     "required": ["path"],
                 }
@@ -62,16 +55,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "toolSpec": {
             "name": "local_write_file",
-            "description": (
-                "Write content to a file on the USER'S LOCAL MACHINE, creating directories as needed. "
-                "Use ONLY for writing to the user's local filesystem."
-            ),
+            "description": "Write content to a file on the user's local machine.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "File path on the user's local machine."},
-                        "content": {"type": "string", "description": "Content to write."},
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
                     },
                     "required": ["path", "content"],
                 }
@@ -81,29 +71,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "toolSpec": {
             "name": "coding_agent",
-            "description": (
-                "Delegate a coding task to a local AI coding agent (like Claude Code or Kiro). "
-                "Use this when the user asks you to write code, fix bugs, refactor, or perform any "
-                "programming task on their local project. The agent runs in the specified working directory "
-                "and has full access to the local filesystem."
-            ),
+            "description": "Delegate coding tasks to a local AI agent (Claude Code / Kiro).",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "agent": {
-                            "type": "string",
-                            "description": "Which coding agent to use: 'claude' (Claude Code) or 'kiro' (Kiro CLI).",
-                            "enum": ["claude", "kiro"],
-                        },
-                        "prompt": {
-                            "type": "string",
-                            "description": "The coding task description to send to the agent. Be specific and detailed.",
-                        },
-                        "working_dir": {
-                            "type": "string",
-                            "description": "Working directory for the agent (absolute path). Defaults to the user's current project.",
-                        },
+                        "agent": {"type": "string", "enum": ["claude", "kiro"]},
+                        "prompt": {"type": "string"},
+                        "working_dir": {"type": "string"},
                     },
                     "required": ["agent", "prompt"],
                 }
@@ -113,13 +88,22 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "toolSpec": {
             "name": "coding_agent_list",
-            "description": (
-                "List available coding agents and their status (installed, enabled)."
-            ),
+            "description": "List available coding agents and their status.",
+            "inputSchema": {"json": {"type": "object", "properties": {}}},
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "sub_task",
+            "description": "Spawn a sub-agent for an independent task (isolated context, shared long-term memory).",
             "inputSchema": {
                 "json": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "task": {"type": "string"},
+                        "system_prompt": {"type": "string"},
+                    },
+                    "required": ["task"],
                 }
             },
         }
@@ -127,29 +111,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "toolSpec": {
             "name": "persona_manage",
-            "description": (
-                "Manage your own persona/identity. You can create new personas, update existing ones, "
-                "switch between them, or delete them. This is YOUR self-management tool — "
-                "use it when you want to evolve, add a new role, or when the user asks you to change personality. "
-                "Actions: list, get, create, update, switch, delete."
-            ),
+            "description": "Manage your personas. Actions: list, get, create, update, switch, delete.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "action": {
-                            "type": "string",
-                            "enum": ["list", "get", "create", "update", "switch", "delete"],
-                            "description": "The action to perform.",
-                        },
-                        "name": {
-                            "type": "string",
-                            "description": "Persona identifier (filename without .yaml). Required for all actions except list.",
-                        },
-                        "data": {
-                            "type": "object",
-                            "description": "Persona data for create/update. Should include: name (display name), emoji, creature, vibe, tone.",
-                        },
+                        "action": {"type": "string", "enum": ["list", "get", "create", "update", "switch", "delete"]},
+                        "name": {"type": "string"},
+                        "data": {"type": "object"},
                     },
                     "required": ["action"],
                 }

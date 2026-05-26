@@ -89,6 +89,8 @@ _TOOLS_PROMPT = """
 3. 你运行在用户的本地机器上，有权限访问用户的文件系统
 4. 你拥有 persona_manage 工具，可以自主管理自己的人格角色。当用户要求你变换身份、创建新角色、或你觉得需要进化时，直接使用它
 5. 你拥有 coding_agent 工具，可以委派编程任务给本地 coding agent（如 Claude Code、Kiro）。当用户需要写代码、修bug、重构项目时，使用 coding_agent 把任务交给专业编程工具执行
+6. 你拥有 sub_task 工具，可以启动独立子任务（如查资料、做计算、翻译等）。子任务在独立会话中运行，看不到当前对话，所以指令要自包含
+7. 你目前**不支持图片输入**。如果用户发送图片路径或让你"看图"，请告知暂不支持直接查看图片，建议用户描述图片内容或等待后续版本支持
 """
 
 
@@ -119,6 +121,7 @@ async def invoke_with_tool_loop(
       {"type": "text",        "content": str}
       {"type": "tool_call",   "name": str}
       {"type": "tool_result", "name": str, "result": dict}
+      {"type": "session_reset", "new_session_id": str}
       {"type": "done",        "full_text": str, "stats": dict}
     """
     client = _get_client()
@@ -137,6 +140,7 @@ async def invoke_with_tool_loop(
     total_output_tokens = 0
     invoke_count = 0
     tools_called: list[dict[str, Any]] = []
+    orphan_repair_attempted = False
 
     while True:
         invoke_count += 1
@@ -152,13 +156,27 @@ async def invoke_with_tool_loop(
 
         try:
             response = client.invoke_harness(**invoke_kwargs)
-        except ClientError as e:
-            code = e.response["Error"].get("Code", "")
-            if "413" in str(e) or "PayloadTooLarge" in code:
+        except Exception as e:
+            error_str = str(e)
+            # 413 / PayloadTooLarge
+            if "413" in error_str or "PayloadTooLarge" in error_str:
                 yield {"type": "error", "message": "上轮对话内容过大（如图片 base64），Memory 写入失败。已跳过该轮记忆，请继续对话。"}
-                # 清空本地消息历史，让 Memory 侧的旧上下文接管
                 local_messages = []
                 current_content = [{"text": "(上轮因内容过大被跳过) " + message if invoke_count == 1 else "(继续)"}]
+                current_role = "user"
+                continue
+            # tool_use/tool_result 不匹配（Memory 残缺）
+            if ("tool_result" in error_str and "tool_use" in error_str) or "toolResult" in error_str:
+                if orphan_repair_attempted:
+                    yield {"type": "error", "message": "会话记忆修复未成功，跳过本轮。"}
+                    yield {"type": "done", "full_text": "", "stats": {"elapsed": time.time() - turn_start, "input_tokens": 0, "output_tokens": 0, "invoke_count": invoke_count, "tools": []}}
+                    return
+                orphan_repair_attempted = True
+                yield {"type": "error", "message": "会话记忆存在异常，正在尝试恢复..."}
+                session_id = session_id + "_r"
+                yield {"type": "session_reset", "new_session_id": session_id}
+                local_messages = []
+                current_content = [{"text": message}]
                 current_role = "user"
                 continue
             raise
@@ -170,8 +188,10 @@ async def invoke_with_tool_loop(
         # 追踪当前 message 段的角色，只有 assistant 段的 text 才输出给用户
         msg_role: str | None = None
         final_stop_reason = "end_turn"
+        stream_error = None
 
-        for event in response["stream"]:
+        try:
+          for event in response["stream"]:
             if "messageStart" in event:
                 msg_role = event["messageStart"].get("role")
 
@@ -234,18 +254,41 @@ async def invoke_with_tool_loop(
 
             elif "messageStop" in event:
                 final_stop_reason = event["messageStop"].get("stopReason", "end_turn")
+        except Exception as e:
+            stream_error = str(e)
+
+        # 如果 stream 过程中出错（如 Memory 召回了残缺历史）
+        if stream_error and (("tool_result" in stream_error and "tool_use" in stream_error) or "toolResult" in stream_error):
+            if orphan_repair_attempted:
+                yield {"type": "error", "message": "会话记忆修复未成功，跳过本轮。"}
+                yield {"type": "done", "full_text": "", "stats": {"elapsed": time.time() - turn_start, "input_tokens": 0, "output_tokens": 0, "invoke_count": invoke_count, "tools": []}}
+                return
+            orphan_repair_attempted = True
+            yield {"type": "error", "message": "会话记忆存在异常，正在尝试恢复..."}
+            session_id = session_id + "_r"
+            yield {"type": "session_reset", "new_session_id": session_id}
+            local_messages = []
+            current_content = [{"text": message}]
+            current_role = "user"
+            continue
+        elif stream_error:
+            raise RuntimeError(stream_error)
 
         # for 循环结束：整个 streaming response 已消费完毕
         # 检查是否有需要本地执行的工具
         if tool_uses:
             # 本地工具需要执行后再次 invoke
-            current_content = []
+            # Memory 模式下只需传 assistant(tool_use) + user(tool_result) 这一对
+            # 不能累积 local_messages，因为 Memory 自动召回历史
+            tool_result_content = []
             for tool in tool_uses:
                 tool_start = time.time()
                 allowed = await confirm_tool_call(tool["name"], tool["input"])
                 if allowed:
                     if tool["name"].startswith("mcp__"):
                         result = await get_mcp_manager().call_tool_by_full_name(tool["name"], tool["input"])
+                    elif tool["name"] == "sub_task":
+                        result = await execute_tool(tool["name"], {**tool["input"], "parent_session_id": session_id})
                     else:
                         result = await execute_tool(tool["name"], tool["input"])
                 else:
@@ -253,19 +296,23 @@ async def invoke_with_tool_loop(
                 tool_elapsed = time.time() - tool_start
                 tools_called.append({"name": tool["name"], "elapsed": tool_elapsed, "ok": "error" not in result})
                 yield {"type": "tool_result", "name": tool["name"], "result": result}
-                current_content.append({
+                tool_result_content.append({
                     "toolResult": {
                         "toolUseId": tool["toolUseId"],
                         "content": [{"text": json.dumps(result, ensure_ascii=False)}],
                         "status": "error" if "error" in result else "success",
                     }
                 })
-            if assistant_content:
-                if full_text:
-                    assistant_content.insert(0, {"text": full_text})
-                local_messages.append({"role": "assistant", "content": assistant_content})
+            # 构建 assistant(tool_use) + user(tool_result) 消息对
+            if full_text:
+                assistant_content.insert(0, {"text": full_text})
+            local_messages = [
+                {"role": "assistant", "content": assistant_content},
+            ]
+            current_content = tool_result_content
             current_role = "user"
             tool_uses = []
+            assistant_content = []
             full_text = ""
         else:
             # 没有本地工具需要执行 → 对话完成（服务端工具已在 streaming 中处理完毕）
