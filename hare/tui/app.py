@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import asyncio
+import os
 import sys
 
 from prompt_toolkit import PromptSession
@@ -11,7 +12,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion, AutoSuggestFromHistory
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.formatted_text import HTML, ANSI
 
 from rich.console import Console
 from rich.live import Live
@@ -27,6 +28,48 @@ from hare.tui.session_picker import pick_or_create_session, _find_key
 from hare.mcp_client import get_mcp_manager
 
 AUTO_SUMMARIZE_AT = 3
+
+
+
+class SessionStats:
+    """会话级别的累计统计，持久化到 session 记录中。"""
+
+    def __init__(self, session_key: str = None, manager=None):
+        self._session_key = session_key
+        self._manager = manager
+        # 从 session 记录中恢复
+        saved = {}
+        if session_key and manager:
+            s = manager.get_session(session_key) or {}
+            saved = s.get("stats", {})
+        self.total_input_tokens = saved.get("input_tokens", 0)
+        self.total_output_tokens = saved.get("output_tokens", 0)
+        self.total_turns = saved.get("turns", 0)
+        self.total_tools = saved.get("tools", 0)
+        self.last_input_tokens = 0
+        self.last_output_tokens = 0
+
+    def update(self, stats: dict) -> None:
+        self.last_input_tokens = stats.get("input_tokens", 0)
+        self.last_output_tokens = stats.get("output_tokens", 0)
+        self.total_input_tokens += self.last_input_tokens
+        self.total_output_tokens += self.last_output_tokens
+        self.total_turns += 1
+        self.total_tools += len(stats.get("tools", []))
+        self._persist()
+
+    def _persist(self) -> None:
+        if self._session_key and self._manager:
+            session = self._manager.get_session(self._session_key)
+            if session:
+                session["stats"] = {
+                    "input_tokens": self.total_input_tokens,
+                    "output_tokens": self.total_output_tokens,
+                    "turns": self.total_turns,
+                    "tools": self.total_tools,
+                }
+                from hare.session import _save_store
+                _save_store(self._manager._store)
 
 console = Console()
 
@@ -135,29 +178,23 @@ def _print_stats(stats: dict) -> None:
 
     parts = []
 
-    # 耗时
     if elapsed >= 60:
         parts.append(f"{elapsed:.0f}s")
     else:
         parts.append(f"{elapsed:.1f}s")
 
-    # Token
     if input_tokens or output_tokens:
-        parts.append(f"↑{input_tokens} ↓{output_tokens} tokens")
+        parts.append(f"↑{input_tokens:,} ↓{output_tokens:,}")
 
-    # 工具摘要
     if tools:
-        tool_names = [t["name"].split("__")[-1] if "__" in t["name"] else t["name"] for t in tools]
-        # 去重计数
         from collections import Counter
+        tool_names = [t["name"].split("__")[-1] if "__" in t["name"] else t["name"] for t in tools]
         counts = Counter(tool_names)
-        tool_parts = []
-        for name, count in counts.items():
-            tool_parts.append(f"{name}×{count}" if count > 1 else name)
-        parts.append("tools: " + ", ".join(tool_parts))
+        tool_parts = [f"{name}×{count}" if count > 1 else name for name, count in counts.items()]
+        parts.append(" ".join(tool_parts))
 
     if parts:
-        console.print(f"\n[dim]  {'  |  '.join(parts)}[/dim]")
+        console.print(f"[dim]  {'  │  '.join(parts)}[/dim]")
 
 
 async def _auto_summarize(session_key: str, session_id: str, manager) -> None:
@@ -212,7 +249,7 @@ def _sync_generate_summary(session_id: str) -> dict[str, str] | None:
         return None
 
 
-async def _stream_response(session_id: str, message: str, actor_id: str | None = None) -> str | None:
+async def _stream_response(session_id: str, message: str, actor_id: str | None = None, session_stats: SessionStats | None = None) -> str | None:
     """流式输出 Harness 回复。返回新 session_id（如果发生了 reset）或 None。"""
     _p = get_persona()
     _emoji = _p.get("emoji", "🐇")
@@ -323,6 +360,16 @@ async def _stream_response(session_id: str, message: str, actor_id: str | None =
                 stats = event.get("stats")
                 if stats:
                     _print_stats(stats)
+                    if session_stats:
+                        session_stats.update(stats)
+                # 同步当前 persona 到 session（可能被 persona_manage 工具切换了）
+                if session_stats and session_stats._session_key and session_stats._manager:
+                    current_persona = get_active_persona_name()
+                    s = session_stats._manager.get_session(session_stats._session_key)
+                    if s and s.get("persona") != current_persona:
+                        s["persona"] = current_persona
+                        from hare.session import _save_store
+                        _save_store(session_stats._manager._store)
                 break
 
     except Exception:
@@ -351,15 +398,33 @@ async def run_chat() -> None:
     session_name = session_entry["name"]
 
     _banner(session_name, session_id)
-    await _load_session_recap(session_id, session_entry.get("turns", 0))
+
+    session_stats = SessionStats(session_key, manager)
+
+    def _bottom_toolbar():
+        _p = get_persona()
+        _emoji = _p.get("emoji", "🐇")
+        _name = _p.get("name", "Hare")
+        cwd = os.getcwd()
+        home = os.path.expanduser("~")
+        if cwd.startswith(home):
+            cwd = "~" + cwd[len(home):]
+        total_str = f"Σ ↑{session_stats.total_input_tokens:,} ↓{session_stats.total_output_tokens:,}"
+        last_str = ""
+        if session_stats.last_input_tokens or session_stats.last_output_tokens:
+            last_str = f" (本轮 ↑{session_stats.last_input_tokens:,} ↓{session_stats.last_output_tokens:,})"
+        turns_str = f"{session_stats.total_turns} turns"
+        return HTML(
+            f'<style bg="#1a1a2e" fg="#e0e0e0">'
+            f' {_emoji} <b>{_name}</b>'
+            f' <style fg="#555">│</style> <style fg="#6ec4e8">{session_name}</style>'
+            f' <style fg="#555">│</style> <style fg="#7ecf7e">{cwd}</style>'
+            f' <style fg="#555">│</style> <style fg="#f0c674">{total_str}</style>{last_str}'
+            f' <style fg="#555">│</style> {turns_str} '
+            f'</style>'
+        )
 
     kb = KeyBindings()
-
-    @kb.add(Keys.Escape)
-    def _esc(event):
-        buf = event.app.current_buffer
-        if buf.text:
-            buf.reset()
 
     @kb.add(Keys.ControlC)
     def _ctrl_c(event):
@@ -369,12 +434,22 @@ async def run_chat() -> None:
         else:
             event.app.exit(exception=EOFError())
 
+    @kb.add(Keys.ControlU)
+    def _ctrl_u(event):
+        event.app.current_buffer.reset()
+
+    @kb.add(Keys.ControlJ)
+    def _newline(event):
+        event.app.current_buffer.insert_text("\n")
+
     prompt_session = PromptSession(
         history=InMemoryHistory(),
         auto_suggest=CommandAutoSuggest(),
         mouse_support=False,
         key_bindings=kb,
         enable_history_search=True,
+        bottom_toolbar=_bottom_toolbar,
+        multiline=False,
     )
 
     while True:
@@ -405,6 +480,7 @@ async def run_chat() -> None:
             session_key, session_entry = manager.new_session(new_name)
             session_id = session_entry["id"]
             session_name = new_name
+            session_stats = SessionStats(session_key, manager)
             _banner(session_name, session_id)
             continue
 
@@ -412,8 +488,8 @@ async def run_chat() -> None:
             session_key, session_entry = await pick_or_create_session()
             session_id = session_entry["id"]
             session_name = session_entry["name"]
+            session_stats = SessionStats(session_key, manager)
             _banner(session_name, session_id)
-            await _load_session_recap(session_id, session_entry.get("turns", 0))
             continue
 
         if message.startswith("/session "):
@@ -455,6 +531,11 @@ async def run_chat() -> None:
                 persona = get_persona(target)
                 emoji = persona.get("emoji", "")
                 name = persona.get("name", target)
+                # 同步到当前 session 记录
+                if session_key in manager._store["sessions"]:
+                    manager._store["sessions"][session_key]["persona"] = target
+                    from hare.session import _save_store
+                    _save_store(manager._store)
                 console.print(f"  [green]✓ 已切换人设：{emoji} {name}[/green]")
                 _banner(session_name, session_id)
             else:
@@ -464,7 +545,7 @@ async def run_chat() -> None:
 
         # ── 正常对话 ──────────────────────────────────────────────────────
         try:
-            new_sid = await _stream_response(session_id, message)
+            new_sid = await _stream_response(session_id, message, session_stats=session_stats)
             if new_sid:
                 # session_id 被重置（Memory 损坏恢复），持久化新 ID
                 session_id = new_sid

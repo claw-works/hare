@@ -76,14 +76,16 @@ class SessionManager:
 
     # ── 创建 / 切换 ────────────────────────────────────────────────────────
 
-    def new_session(self, name: str = "") -> tuple[str, dict]:
+    def new_session(self, name: str = "", persona: str = "") -> tuple[str, dict]:
         """新建 session，返回 (key, session_dict)。"""
+        from hare.persona import get_active_persona_name
         key = str(uuid.uuid4())
         session_id = _new_session_id()
         name = name.strip() or f"会话 {len(self._store['sessions']) + 1}"
         entry = {
             "id": session_id,
             "name": name,
+            "persona": persona or get_active_persona_name(),
             "summary": "",
             "turns": 0,
             "created_at": _now(),
@@ -95,11 +97,16 @@ class SessionManager:
         return key, entry
 
     def activate(self, key: str) -> dict | None:
-        """激活指定 session（设为 last_active），返回 session_dict。"""
+        """激活指定 session（设为 last_active），并恢复该 session 绑定的 persona。"""
         session = self._store["sessions"].get(key)
         if session:
             self._store["last_active"] = key
             _save_store(self._store)
+            # 恢复 session 绑定的 persona
+            persona_name = session.get("persona")
+            if persona_name:
+                from hare.persona import set_active_persona
+                set_active_persona(persona_name)
         return session
 
     # ── 删除 / 重命名 ──────────────────────────────────────────────────────

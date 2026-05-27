@@ -82,6 +82,8 @@ def manage_persona(
     if action == "delete":
         if not name:
             return {"error": "需要指定 name"}
+        if name == "hare":
+            return {"error": "默认人格 'hare' 不可删除"}
         if name == get_active_persona_name():
             return {"error": f"不能删除当前激活的人格 '{name}'，请先切换"}
         path = PERSONAS_DIR / f"{name}.yaml"
