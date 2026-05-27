@@ -56,7 +56,7 @@ def main():
         if not os.environ.get("HARNESS_ARN") or "ACCOUNT_ID" in os.environ.get("HARNESS_ARN", ""):
             return
 
-    from hare.tui.app import main as run
+    from hare.tui_v2.app import main as run
     run()
 
 
