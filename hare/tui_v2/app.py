@@ -9,6 +9,7 @@ os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
 
 import asyncio
 import sys
+import json
 from datetime import datetime
 from typing import Any
 
@@ -18,13 +19,14 @@ from textual import work
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Input, Static, Label, OptionList, RichLog, TextArea
+from textual.widgets import Footer, Header, Input, Static, Label, OptionList, RichLog, TextArea, Collapsible
 from textual.widgets import Markdown as MarkdownWidget
 from textual.containers import VerticalScroll
 from textual.widgets.option_list import Option
 from textual.message import Message
 
 from rich.markdown import Markdown, TableElement
+from rich.pretty import Pretty
 from rich.text import Text
 from rich import box
 
@@ -51,7 +53,7 @@ def _patched_table_rich_console(self, console, options):
 
 TableElement.__rich_console__ = _patched_table_rich_console
 
-from hare.harness import invoke_with_tool_loop
+from hare.harness import invoke_with_tool_loop, set_tool_confirm_callback
 from hare.session import get_manager, _save_store
 from hare.persona import (
     ensure_defaults, get_active_persona_name, get_persona,
@@ -120,15 +122,12 @@ class StatusBar(Static):
         total = f"Σ ↑{stats.total_input_tokens:,} ↓{stats.total_output_tokens:,}"
         last = ""
         if stats.last_input_tokens or stats.last_output_tokens:
-            last = f"  (↑{stats.last_input_tokens:,} ↓{stats.last_output_tokens:,})"
+            last = f" (↑{stats.last_input_tokens:,} ↓{stats.last_output_tokens:,})"
         turns = f"{stats.total_turns} turns"
-        session_name = app.session_name or ""
 
         text = Text()
         text.append(f" {emoji} ", style="bold")
-        text.append(f"{name}", style="bold white")
-        text.append(" │ ", style="dim")
-        text.append(session_name, style="cyan")
+        text.append(name, style="bold white")
         text.append(" │ ", style="dim")
         text.append(cwd, style="green")
         text.append(" │ ", style="dim")
@@ -138,6 +137,97 @@ class StatusBar(Static):
         text.append(turns, style="white")
         text.append(" ")
         return text
+
+
+
+def _tool_subtitle(tool_name: str, tool_input: dict) -> str:
+    """从工具 input 里提取最有意义的那个字段作为副标题。"""
+    if not tool_input:
+        return ""
+    # 优先级映射
+    KEY_PRIORITY = ["command", "path", "query", "task", "prompt", "url", "agent", "code"]
+    for key in KEY_PRIORITY:
+        if key in tool_input:
+            val = str(tool_input[key])
+            # 截断，保留首行
+            val = val.split(chr(10))[0].strip()
+            return val[:60] + "…" if len(val) > 60 else val
+    # 兜底：取第一个 value
+    first_val = str(next(iter(tool_input.values()), ""))
+    first_val = first_val.split(chr(10))[0].strip()
+    return first_val[:60] + "…" if len(first_val) > 60 else first_val
+
+
+class ToolCollapsible(Static):
+    """工具调用折叠块：用标准 Collapsible 组合，避免继承破坏内部结构。"""
+
+    FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, tool_name: str, tool_input=None):
+        super().__init__(classes="tool-collapsible-wrap")
+        self._tool_name = tool_name
+        self._tool_input = tool_input or {}
+        self._subtitle = _tool_subtitle(tool_name, self._tool_input) if isinstance(tool_input, dict) else (str(tool_input) if tool_input else "")
+        self._frame_idx = 0
+        self._spinner_timer = None
+
+    def _make_title(self, prefix: str) -> str:
+        if self._subtitle:
+            return f"{prefix} {self._tool_name}: {self._subtitle}"
+        return f"{prefix} {self._tool_name}"
+
+    def compose(self) -> ComposeResult:
+        with Collapsible(title=self._make_title("⠋"), collapsed=True, classes="tool-collapsible"):
+            yield Static("", id="tool-body", markup=False)
+
+    def on_mount(self) -> None:
+        self._update_body()
+        self._spinner_timer = self.set_interval(0.1, self._tick)
+
+    def _get_collapsible(self):
+        return self.query_one(".tool-collapsible", Collapsible)
+
+    def _tick(self) -> None:
+        self._frame_idx = (self._frame_idx + 1) % len(self.FRAMES)
+        frame = self.FRAMES[self._frame_idx]
+        try:
+            self._get_collapsible().title = self._make_title(frame)
+        except Exception:
+            pass
+
+    def _update_body(self, result=None, ok: bool = True) -> None:
+        try:
+            from rich.console import Group
+            from rich.text import Text
+            from rich.pretty import Pretty
+            body = self.query_one("#tool-body", Static)
+            renderables = []
+            if self._tool_input:
+                renderables.append(Text.from_markup(f"[dim]input:[/dim]  {self._tool_input}"))
+            if result is not None:
+                label_color = "green" if ok else "red"
+                label = Text.from_markup(f"[dim]output:[/dim]")
+                if isinstance(result, str):
+                    display = result if len(result) <= 500 else result[:500] + "...(truncated)"
+                    renderables.append(Text.assemble(label, " ", (display, label_color)))
+                else:
+                    renderables.append(label)
+                    renderables.append(Pretty(result, max_length=20, max_string=200))
+            body.update(Group(*renderables))
+        except Exception:
+            pass
+
+    def finish(self, result, ok: bool) -> None:
+        """工具执行完成，停止 spinner，更新标题和内容。"""
+        if self._spinner_timer:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
+        icon = "✅" if ok else "❌"
+        try:
+            self._get_collapsible().title = self._make_title(icon)
+        except Exception:
+            pass
+        self._update_body(result=result, ok=ok)
 
 
 SLASH_COMMANDS = [
@@ -227,6 +317,11 @@ class ChatInput(TextArea):
                         self.text = cmd
                         palette.hide()
                         self._cmd_just_filled = True
+                        # 光标移到末尾
+                        lines = self.text.splitlines()
+                        end_row = len(lines) - 1
+                        end_col = len(lines[-1]) if lines else 0
+                        self.move_cursor((end_row, end_col))
                         return
                 except Exception:
                     pass
@@ -353,7 +448,7 @@ class HareApp(App):
     }
 
     .assistant-md {
-        margin: 0 0 1 2;
+        margin: 0 0 0 2;
         padding: 0 1;
         height: auto;
     }
@@ -372,6 +467,13 @@ class HareApp(App):
         color: $text-muted;
     }
 
+    #status-bar {
+        height: 1;
+        padding: 0 1;
+        background: $panel;
+        color: $text-muted;
+    }
+
     #input-area {
         height: auto;
         max-height: 10;
@@ -384,6 +486,23 @@ class HareApp(App):
         margin: 0 0 0 2;
         padding: 0 1;
         color: $success;
+    }
+
+    .tool-collapsible-wrap {
+        height: auto;
+        margin: 0 0 0 2;
+        padding: 0;
+    }
+    .tool-collapsible {
+        height: auto;
+        margin: 0;
+        padding-bottom: 0;
+        background: transparent;
+        border-top: none;
+    }
+    .tool-collapsible #tool-body {
+        padding: 0 1;
+        color: $text-muted;
     }
 
     #user-input {
@@ -425,9 +544,19 @@ class HareApp(App):
         yield VerticalScroll(id="chat-area")
         with Vertical(id="input-area"):
             yield CommandPalette(id="cmd-palette")
+            yield StatusBar(id="status-bar")
             yield ChatInput(id="user-input", language=None)
 
     async def on_mount(self) -> None:
+        # 注入 Textual 原生的工具确认（目前自动允许，后续可改为弹窗确认）
+        async def _auto_allow(name: str, input_data: dict) -> bool:
+            from hare.allow import is_allowed, is_session_allowed
+            if is_allowed(name) or is_session_allowed(name):
+                return True
+            # TODO: 改为 push_screen 弹出确认对话框
+            return True
+
+        set_tool_confirm_callback(_auto_allow)
         ensure_defaults()
         ensure_acp_config()
         await get_mcp_manager().initialize()
@@ -449,21 +578,20 @@ class HareApp(App):
         self._refresh_status()
 
     def _update_header(self) -> None:
-        _p = get_persona()
-        emoji = _p.get("emoji", "🐇")
-        name = _p.get("name", "Hare")
-        self.title = f"{emoji} {name} │ {self.session_name}"
-
-        cwd = os.getcwd()
-        home = os.path.expanduser("~")
-        if cwd.startswith(home):
-            cwd = "~" + cwd[len(home):]
-        stats = self.session_stats
-        total = f"↑{stats.total_input_tokens:,} ↓{stats.total_output_tokens:,}"
-        self.sub_title = f"{cwd} │ {total} │ {stats.total_turns} turns"
+        session_title = self.session_name or "新会话"
+        self.title = session_title
+        self.sub_title = ""
+        # 刷新状态栏
+        try:
+            self.query_one("#status-bar", StatusBar).refresh()
+        except Exception:
+            pass
 
     def _refresh_status(self) -> None:
         self._update_header()
+
+    def _set_tool_status(self, icon: str, name: str, done: bool = False) -> None:
+        self.notify(f"{icon} {name}", timeout=2, severity="information")
 
     _thinking_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     _thinking_idx = 0
@@ -572,6 +700,7 @@ class HareApp(App):
         chat = self.query_one("#chat-area", VerticalScroll)
         full_text = ""
         md_widget: MarkdownWidget | None = None
+        tool_collapsible: ToolCollapsible | None = None
 
         try:
             # invoke_with_tool_loop 内部用同步 boto3，逐事件 yield
@@ -630,7 +759,8 @@ class HareApp(App):
                         md_widget = None
                         full_text = ""
                     self.is_thinking = False
-                    await chat.mount(Static(f"  🔧 {event['name']}...", classes="tool-msg"))
+                    tool_collapsible = ToolCollapsible(event["name"], event.get("input", {}))
+                    await chat.mount(tool_collapsible)
                     chat.scroll_end(animate=False)
 
                 elif event["type"] == "server_tool_call":
@@ -638,14 +768,28 @@ class HareApp(App):
                         md_widget = None
                         full_text = ""
                     self.is_thinking = False
-                    await chat.mount(Static(f"  ⚡ {event['name']}...", classes="tool-msg"))
+                    tool_collapsible = ToolCollapsible(event["name"], event.get("input", {}))
+                    await chat.mount(tool_collapsible)
                     chat.scroll_end(animate=False)
 
                 elif event["type"] == "tool_result":
-                    ok = "error" not in event["result"]
-                    icon = "✅" if ok else "❌"
-                    await chat.mount(Static(f"  {icon} {event['name']}", classes="tool-msg"))
-                    chat.scroll_end(animate=False)
+                    if tool_collapsible is not None:
+                        raw = event.get("result", {})
+                        ok = "error" not in raw
+                        if isinstance(raw, dict) and ("stdout" in raw or "stderr" in raw):
+                            # shell 类工具：提取纯文本
+                            parts = []
+                            if raw.get("stdout", "").strip():
+                                parts.append(raw["stdout"].strip())
+                            if raw.get("stderr", "").strip():
+                                parts.append(f"[stderr] {raw['stderr'].strip()}")
+                            display = chr(10).join(parts)
+                        elif isinstance(raw, dict) and "error" in raw and len(raw) == 1:
+                            display = raw["error"]
+                        else:
+                            display = raw  # dict/list → Pretty
+                        tool_collapsible.finish(display, ok)
+                        tool_collapsible = None
                     self.is_thinking = True
 
                 elif event["type"] == "error":
@@ -656,6 +800,7 @@ class HareApp(App):
                 elif event["type"] == "done":
                     if full_text:
                         self._current_response = full_text
+                    # toast 由 show_tool(done=True) 自动 2s 后隐藏，这里不额外清空
                     stats = event.get("stats")
                     if stats:
                         self.session_stats.update(stats)

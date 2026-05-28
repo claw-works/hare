@@ -14,6 +14,13 @@ from hare.mcp_client import get_mcp_manager
 from hare.persona import build_persona_prompt
 from hare.tui.confirm import confirm_tool_call
 
+# 工具确认回调 — 由 TUI 层注入
+_tool_confirm_callback = None
+
+def set_tool_confirm_callback(callback):
+    global _tool_confirm_callback
+    _tool_confirm_callback = callback
+
 
 def _get_client():
     session = boto3.Session(
@@ -210,7 +217,7 @@ async def invoke_with_tool_loop(
                                 "name": tool_name,
                                 "input_json": "",
                             }
-                            yield {"type": "tool_call", "name": tool_name}
+                            # input 还没组装完，等 contentBlockStop 再 yield
                         else:
                             tools_called.append({"name": tool_name, "elapsed": 0, "ok": True, "server": True})
                             yield {"type": "server_tool_call", "name": tool_name, "tool_type": "server_tool_use"}
@@ -245,12 +252,15 @@ async def invoke_with_tool_loop(
                             "input": input_data,
                         }
                     })
+                    yield {"type": "tool_call", "name": current_tool["name"], "input": input_data}
                     current_tool = None
 
             elif "metadata" in event:
                 usage = event["metadata"].get("usage", {})
-                total_input_tokens += usage.get("inputTokens", 0)
-                total_output_tokens += usage.get("outputTokens", 0)
+                in_tok = usage.get("inputTokens", 0)
+                out_tok = usage.get("outputTokens", 0)
+                total_input_tokens += in_tok
+                total_output_tokens += out_tok
 
             elif "messageStop" in event:
                 final_stop_reason = event["messageStop"].get("stopReason", "end_turn")
@@ -283,7 +293,10 @@ async def invoke_with_tool_loop(
             tool_result_content = []
             for tool in tool_uses:
                 tool_start = time.time()
-                allowed = await confirm_tool_call(tool["name"], tool["input"])
+                if _tool_confirm_callback:
+                    allowed = await _tool_confirm_callback(tool["name"], tool["input"])
+                else:
+                    allowed = await confirm_tool_call(tool["name"], tool["input"])
                 if allowed:
                     if tool["name"].startswith("mcp__"):
                         result = await get_mcp_manager().call_tool_by_full_name(tool["name"], tool["input"])
