@@ -45,6 +45,10 @@ class MCPTransport:
     async def send(self, request: dict) -> dict:
         raise NotImplementedError
 
+    async def notify(self, notification: dict) -> None:
+        """发送通知（fire-and-forget，不等待响应）。"""
+        pass  # 默认 no-op，子类按需 override
+
     async def close(self) -> None:
         pass
 
@@ -80,6 +84,16 @@ class StdioTransport(MCPTransport):
                 raise RuntimeError("MCP server closed stdout")
             return json.loads(line)
 
+    async def notify(self, notification: dict) -> None:
+        """发送通知，fire-and-forget。"""
+        if self._proc and self._proc.stdin:
+            payload = json.dumps(notification) + "\n"
+            self._proc.stdin.write(payload.encode())
+            try:
+                await self._proc.stdin.drain()
+            except Exception:
+                pass
+
     async def close(self) -> None:
         if self._proc:
             self._proc.terminate()
@@ -112,22 +126,56 @@ class SSETransport(MCPTransport):
 
 
 class StreamableHTTPTransport(MCPTransport):
-    """Streamable HTTP 传输（MCP 2025-03 规范）。"""
+    """Streamable HTTP 传输（MCP 2025-03 规范），支持 mcp-session-id。"""
 
     def __init__(self, url: str, headers: dict | None = None):
         self.url = url.rstrip("/")
         self.headers = headers or {}
         self._client = httpx.AsyncClient(timeout=60)
         self._msg_id = 0
+        self._session_id: str | None = None
+
+    def _build_headers(self) -> dict:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            **self.headers,
+        }
+        if self._session_id:
+            headers["mcp-session-id"] = self._session_id
+        return headers
+
+    def _parse_response(self, resp: httpx.Response) -> dict:
+        """解析响应，支持 SSE 和 JSON 两种格式。"""
+        if "mcp-session-id" in resp.headers:
+            self._session_id = resp.headers["mcp-session-id"]
+        content_type = resp.headers.get("content-type", "")
+        if "text/event-stream" in content_type:
+            for line in resp.text.splitlines():
+                if line.startswith("data:"):
+                    data = line[5:].strip()
+                    if data:
+                        return json.loads(data)
+            return {}
+        return resp.json()
 
     async def send(self, request: dict) -> dict:
         self._msg_id += 1
         request.setdefault("id", self._msg_id)
         resp = await self._client.post(
-            self.url, json=request, headers=self.headers
+            self.url, json=request, headers=self._build_headers()
         )
         resp.raise_for_status()
-        return resp.json()
+        return self._parse_response(resp)
+
+    async def notify(self, notification: dict) -> None:
+        """发送通知，fire-and-forget（不等响应）。"""
+        try:
+            await self._client.post(
+                self.url, json=notification, headers=self._build_headers()
+            )
+        except Exception:
+            pass  # 通知失败无所谓
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -148,7 +196,7 @@ class MCPServer:
             await self.transport.start()
 
         # initialize 握手
-        init_resp = await self.transport.send({
+        await self.transport.send({
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
@@ -159,8 +207,8 @@ class MCPServer:
             },
         })
 
-        # initialized 通知
-        await self.transport.send({
+        # initialized 通知（notification，无需等待响应）
+        await self.transport.notify({
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
         })
@@ -218,7 +266,6 @@ class MCPManager:
                 await server.initialize()
                 self._servers[name] = server
             except Exception as e:
-                # 连接失败不阻塞其他 server
                 import sys
                 print(f"[MCP] 连接 {name} 失败: {e}", file=sys.stderr)
         self._initialized = True

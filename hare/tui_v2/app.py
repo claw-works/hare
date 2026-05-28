@@ -2,8 +2,12 @@
 """Hare TUI v2 — Textual 全屏界面。"""
 from __future__ import annotations
 
-import asyncio
 import os
+# 必须在 import textual 之前设置
+# 禁用 kitty keyboard protocol（CJK IME 连续输入兼容）
+os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
+
+import asyncio
 import sys
 from datetime import datetime
 from typing import Any
@@ -136,6 +140,55 @@ class StatusBar(Static):
         return text
 
 
+SLASH_COMMANDS = [
+    ("/cos", "切换人设"),
+    ("/session", "切换会话"),
+    ("/clear", "清屏 / 新建会话"),
+    ("/quit", "退出"),
+]
+
+
+class CommandPalette(OptionList):
+    """斜杠命令选择面板。"""
+
+    DEFAULT_CSS = """
+    CommandPalette {
+        height: auto;
+        max-height: 8;
+        padding: 0;
+        background: $boost;
+        display: none;
+        border: tall $accent;
+    }
+    """
+
+    class CommandSelected(Message):
+        def __init__(self, command: str):
+            super().__init__()
+            self.command = command
+
+    def show_commands(self, prefix: str = "/") -> None:
+        matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(prefix)]
+        if matches:
+            self.clear_options()
+            for cmd, desc in matches:
+                self.add_option(Option(f" {cmd}  {desc}", id=cmd))
+            self.highlighted = 0
+            self.display = True
+        else:
+            self.display = False
+
+    def hide(self) -> None:
+        self.display = False
+
+    def get_highlighted_command(self) -> str | None:
+        """获取当前高亮的命令。"""
+        if self.display and self.highlighted is not None and self.option_count > 0:
+            option = self.get_option_at_index(self.highlighted)
+            return option.id if option else None
+        return None
+
+
 class ChatInput(TextArea):
     """自定义输入框：Enter 发送，Shift+Enter 换行。"""
 
@@ -148,23 +201,85 @@ class ChatInput(TextArea):
             super().__init__()
             self.text = text
 
+    class TextChanged(Message):
+        def __init__(self, text: str):
+            super().__init__()
+            self.text = text
+
     async def action_submit(self) -> None:
         text = self.text.strip()
         if text:
             self.post_message(self.Submitted(text))
             self.text = ""
 
+    _cmd_just_filled = False
+
     async def _on_key(self, event) -> None:
         if event.key == "enter":
             event.prevent_default()
             event.stop()
+            # 如果命令面板可见且有高亮项，填入命令（只一次）
+            if not self._cmd_just_filled:
+                try:
+                    palette = self.app.query_one("#cmd-palette", CommandPalette)
+                    cmd = palette.get_highlighted_command()
+                    if cmd:
+                        self.text = cmd
+                        palette.hide()
+                        self._cmd_just_filled = True
+                        return
+                except Exception:
+                    pass
+            self._cmd_just_filled = False
             await self.action_submit()
         elif event.key == "shift+enter":
             event.prevent_default()
             event.stop()
             self.insert("\n")
+        elif event.key == "down" and self.text.strip().startswith("/"):
+            # 命令面板里移动高亮
+            try:
+                palette = self.app.query_one("#cmd-palette", CommandPalette)
+                if palette.display and palette.option_count > 0:
+                    event.prevent_default()
+                    event.stop()
+                    idx = (palette.highlighted or 0) + 1
+                    if idx >= palette.option_count:
+                        idx = 0
+                    palette.highlighted = idx
+                    return
+            except Exception:
+                pass
+            await super()._on_key(event)
+        elif event.key == "up" and self.text.strip().startswith("/"):
+            try:
+                palette = self.app.query_one("#cmd-palette", CommandPalette)
+                if palette.display and palette.option_count > 0:
+                    event.prevent_default()
+                    event.stop()
+                    idx = (palette.highlighted or 0) - 1
+                    if idx < 0:
+                        idx = palette.option_count - 1
+                    palette.highlighted = idx
+                    return
+            except Exception:
+                pass
+            await super()._on_key(event)
+        elif event.key == "escape":
+            try:
+                palette = self.app.query_one("#cmd-palette", CommandPalette)
+                if palette.display:
+                    palette.hide()
+                    event.prevent_default()
+                    event.stop()
+                    return
+            except Exception:
+                pass
+            await super()._on_key(event)
         else:
             await super()._on_key(event)
+        # 通知文本变化
+        self.post_message(self.TextChanged(self.text))
 
 
 class ChatMessage(Static):
@@ -230,10 +345,11 @@ class HareApp(App):
     }
 
     .user-msg {
-        margin: 1 0 0 0;
+        margin: 2 0 0 0;
         padding: 0 1;
         height: auto;
-        background: $boost;
+        color: $success;
+        text-style: bold;
     }
 
     .assistant-md {
@@ -263,11 +379,11 @@ class HareApp(App):
         padding: 0 1;
     }
 
-    #thinking-indicator {
+    .thinking-msg {
         height: 1;
+        margin: 0 0 0 2;
         padding: 0 1;
         color: $success;
-        display: none;
     }
 
     #user-input {
@@ -308,7 +424,7 @@ class HareApp(App):
         yield Header()
         yield VerticalScroll(id="chat-area")
         with Vertical(id="input-area"):
-            yield Static("", id="thinking-indicator")
+            yield CommandPalette(id="cmd-palette")
             yield ChatInput(id="user-input", language=None)
 
     async def on_mount(self) -> None:
@@ -352,42 +468,51 @@ class HareApp(App):
     _thinking_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     _thinking_idx = 0
     _thinking_timer = None
+    _thinking_widget: Static | None = None
 
     def watch_is_thinking(self, thinking: bool) -> None:
-        try:
-            indicator = self.query_one("#thinking-indicator", Static)
-        except Exception:
-            return
+        chat = self.query_one("#chat-area", VerticalScroll)
         if thinking:
+            if self._thinking_widget is None:
+                self._thinking_widget = Static("", classes="thinking-msg")
+                chat.mount(self._thinking_widget)
             self._thinking_idx = 0
             self._update_thinking_text()
-            indicator.display = True
+            chat.scroll_end(animate=False)
             self._thinking_timer = self.set_interval(0.08, self._animate_thinking)
         else:
-            indicator.display = False
             if self._thinking_timer:
                 self._thinking_timer.stop()
                 self._thinking_timer = None
+            if self._thinking_widget:
+                self._thinking_widget.remove()
+                self._thinking_widget = None
 
     def _animate_thinking(self) -> None:
         self._thinking_idx = (self._thinking_idx + 1) % len(self._thinking_frames)
         self._update_thinking_text()
 
     def _update_thinking_text(self) -> None:
-        try:
-            indicator = self.query_one("#thinking-indicator", Static)
+        if self._thinking_widget:
             _p = get_persona()
             emoji = _p.get("emoji", "🐇")
             name = _p.get("name", "Hare")
             frame = self._thinking_frames[self._thinking_idx]
-            indicator.update(f"  {frame} {emoji} {name} 思考中...")
-        except Exception:
-            pass
+            self._thinking_widget.update(f"  {frame} {emoji} {name} 思考中...")
 
     # ── 输入处理 ────────────────────────────────────────────────────────────
 
 
+    def on_chat_input_text_changed(self, event: ChatInput.TextChanged) -> None:
+        palette = self.query_one("#cmd-palette", CommandPalette)
+        text = event.text.strip()
+        if text.startswith("/") and "\n" not in text and len(text) < 12:
+            palette.show_commands(text)
+        else:
+            palette.hide()
+
     async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        self.query_one("#cmd-palette", CommandPalette).hide()
         message = event.text
         user_input = self.query_one("#user-input", ChatInput)
         user_input.read_only = True
@@ -699,27 +824,27 @@ class SessionSelected(Message):
 
 
 class PersonaPickerScreen(Screen):
-    """人格选择全屏。"""
+    """人格选择 — 全屏通栏。"""
 
     CSS = """
     Screen {
-        align: center middle;
-    }
-    #picker-container {
-        width: 60;
-        height: auto;
-        max-height: 20;
-        border: round $accent;
-        padding: 1 2;
+        background: $surface;
     }
     #picker-title {
         text-align: center;
-        padding: 0 0 1 0;
+        padding: 1 0;
         text-style: bold;
+        background: $boost;
     }
     OptionList {
-        height: auto;
-        max-height: 12;
+        height: 1fr;
+        margin: 1 2;
+    }
+    #picker-hint {
+        height: 1;
+        padding: 0 2;
+        color: $text-muted;
+        dock: bottom;
     }
     """
 
@@ -731,17 +856,20 @@ class PersonaPickerScreen(Screen):
         self._active = active
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="picker-container"):
-            yield Label("✨ 选择人设", id="picker-title")
-            ol = OptionList()
-            for p in self._personas:
-                file_name = p.get("_file", "")
-                emoji = p.get("emoji", "")
-                name = p.get("name", file_name)
-                vibe = p.get("vibe", "")
-                mark = " ◀" if file_name == self._active else ""
-                ol.add_option(Option(f" {emoji}  {name} — {vibe}{mark}", id=file_name))
-            yield ol
+        yield Label("✨ 选择人设  (↑↓ 选择, Enter 确认, Esc 取消)", id="picker-title")
+        ol = OptionList()
+        active_idx = 0
+        for i, p in enumerate(self._personas):
+            file_name = p.get("_file", "")
+            emoji = p.get("emoji", "")
+            name = p.get("name", file_name)
+            vibe = p.get("vibe", "")
+            mark = "  ◀ 当前" if file_name == self._active else ""
+            if file_name == self._active:
+                active_idx = i
+            ol.add_option(Option(f"  {emoji}  {name} — {vibe}{mark}", id=file_name))
+        ol.highlighted = active_idx
+        yield ol
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.app.post_message(PersonaSelected(event.option.id))
@@ -752,31 +880,35 @@ class PersonaPickerScreen(Screen):
 
 
 class SessionPickerScreen(Screen):
-    """会话选择全屏。"""
+    """会话选择 — 全屏通栏。"""
 
     CSS = """
     Screen {
-        align: center middle;
-    }
-    #picker-container {
-        width: 70;
-        height: auto;
-        max-height: 24;
-        border: round $accent;
-        padding: 1 2;
+        background: $surface;
     }
     #picker-title {
         text-align: center;
-        padding: 0 0 1 0;
+        padding: 1 0;
         text-style: bold;
+        background: $boost;
     }
     OptionList {
-        height: auto;
-        max-height: 16;
+        height: 1fr;
+        margin: 1 2;
+    }
+    #picker-actions {
+        height: 1;
+        padding: 0 2;
+        dock: bottom;
+        background: $boost;
     }
     """
 
-    BINDINGS = [Binding("escape", "dismiss", "取消")]
+    BINDINGS = [
+        Binding("escape", "dismiss", "取消"),
+        Binding("n", "new_session", "新建"),
+        Binding("d", "delete_session", "删除"),
+    ]
 
     def __init__(self, sessions: list[dict], manager, **kwargs):
         super().__init__(**kwargs)
@@ -784,30 +916,64 @@ class SessionPickerScreen(Screen):
         self._manager = manager
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="picker-container"):
-            yield Label("📋 选择会话", id="picker-title")
-            ol = OptionList()
-            last_key = self._manager.last_active_key
-            for s in self._sessions:
-                name = s.get("name", "未命名")
-                summary = s.get("summary", "")
-                turns = s.get("turns", 0)
-                # 找 key
+        yield Label("📋 选择会话  (↑↓ 选择, Enter 确认, N 新建, D 删除, Esc 取消)", id="picker-title")
+        ol = OptionList(id="session-list")
+        self._rebuild_options(ol)
+        yield ol
+        yield Static("[bold]N[/bold] 新建  [bold]D[/bold] 删除  [bold]Esc[/bold] 取消", id="picker-actions", markup=True)
+
+    def _rebuild_options(self, ol: OptionList | None = None) -> None:
+        if ol is None:
+            ol = self.query_one("#session-list", OptionList)
+            ol.clear_options()
+        last_key = self._manager.last_active_key
+        active_idx = 0
+        self._sessions = self._manager.list_sessions()[:20]
+        for i, s in enumerate(self._sessions):
+            name = s.get("name", "未命名")
+            summary = s.get("summary", "")
+            turns = s.get("turns", 0)
+            key = None
+            for k, v in self._manager._store["sessions"].items():
+                if v["id"] == s["id"]:
+                    key = k
+                    break
+            if key == last_key:
+                active_idx = i
+            mark = "  ◀ 当前" if key == last_key else ""
+            label = f"  {name}  [{turns}轮]{mark}"
+            if summary:
+                label += f"\n    {summary[:50]}"
+            ol.add_option(Option(label, id=key or s["id"]))
+        ol.highlighted = active_idx
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.app.post_message(SessionSelected(event.option.id))
+        self.dismiss()
+
+    def action_new_session(self) -> None:
+        from datetime import datetime
+        new_name = f"会话 {datetime.now().strftime('%m/%d %H:%M')}"
+        key, entry = self._manager.new_session(new_name)
+        self.app.post_message(SessionSelected(key))
+        self.dismiss()
+
+    def action_delete_session(self) -> None:
+        ol = self.query_one("#session-list", OptionList)
+        if ol.highlighted is not None and len(self._sessions) > 0:
+            idx = ol.highlighted
+            if idx < len(self._sessions):
+                s = self._sessions[idx]
                 key = None
                 for k, v in self._manager._store["sessions"].items():
                     if v["id"] == s["id"]:
                         key = k
                         break
-                mark = " ◀" if key == last_key else ""
-                label = f" {name}  [{turns}轮]{mark}"
-                if summary:
-                    label += f"\n   {summary[:30]}"
-                ol.add_option(Option(label, id=key or s["id"]))
-            yield ol
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self.app.post_message(SessionSelected(event.option.id))
-        self.dismiss()
+                if key and key != self._manager.last_active_key:
+                    self._manager.delete_session(key)
+                    self._rebuild_options()
+                else:
+                    self.notify("不能删除当前会话", severity="warning", timeout=2)
 
     def action_dismiss(self) -> None:
         self.dismiss()
