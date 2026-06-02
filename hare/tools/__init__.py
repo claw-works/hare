@@ -130,16 +130,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 async def execute_tool(name: str, input_data: dict[str, Any]) -> dict[str, Any]:
     """Execute a registered tool and return the result."""
-    # MCP 工具路由（包含 mcp__ 前缀）
+    # MCP tool routing (mcp__ prefix)
     if name.startswith("mcp__"):
         from hare.mcp_client import get_mcp_manager
         return await get_mcp_manager().call_tool_by_full_name(name, input_data)
 
     enabled = get_enabled_local_tools()
-    # 兼容旧名称（向后兼容）
+    # Legacy name compatibility
     canonical = name
     if name not in enabled:
-        return {"error": f"工具 '{name}' 未启用或不存在"}
+        return {"error": f"Tool '{name}' is not enabled or does not exist"}
     handler = TOOL_REGISTRY.get(canonical)
     if not handler:
         return {"error": f"Unknown tool: {name}"}

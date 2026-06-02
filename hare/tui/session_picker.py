@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Session 选择器 TUI — 支持上下箭头选择。"""
+"""Session picker TUI — supports arrow key selection."""
 from __future__ import annotations
 
 import sys
@@ -26,14 +26,14 @@ def _fmt_time(ts: str) -> str:
         delta = now - dt
         if delta.days == 0:
             if delta.seconds < 60:
-                return "刚刚"
+                return "just now"
             if delta.seconds < 3600:
-                return f"{delta.seconds // 60} 分钟前"
-            return f"{delta.seconds // 3600} 小时前"
+                return f"{delta.seconds // 60}m ago"
+            return f"{delta.seconds // 3600}h ago"
         elif delta.days == 1:
-            return "昨天"
+            return "yesterday"
         elif delta.days < 7:
-            return f"{delta.days} 天前"
+            return f"{delta.days}d ago"
         else:
             return dt.strftime("%m/%d")
     except Exception:
@@ -48,18 +48,18 @@ def _render_picker(manager: SessionManager, selected_idx: int, sessions: list[di
     last_key = manager.last_active_key
     total = len(manager.list_sessions())
 
-    title_extra = f"  [dim italic]搜索: \"{search_query}\" ({len(sessions)}/{total})[/dim italic]" if search_query else ""
+    title_extra = f"  [dim italic]Search: \"{search_query}\" ({len(sessions)}/{total})[/dim italic]" if search_query else ""
     console.print(Panel(
-        f"[bold green]🐇 Hare[/bold green]  [dim]选择一个会话继续，或新建会话[/dim]{title_extra}",
+        f"[bold green]🐇 Hare[/bold green]  [dim]Pick a session to continue, or create a new one[/dim]{title_extra}",
         border_style="green",
         padding=(0, 2),
     ))
 
     if not sessions:
         if search_query:
-            console.print(f"\n  [dim]没有匹配 \"{search_query}\" 的会话[/dim]\n")
+            console.print(f"\n  [dim]No sessions matching \"{search_query}\"[/dim]\n")
         else:
-            console.print("\n  [dim]暂无会话，按 [bold]N[/bold] 新建[/dim]\n")
+            console.print("\n  [dim]No sessions yet, press [bold]N[/bold] to create one[/dim]\n")
     else:
         table = Table(
             box=box.ROUNDED,
@@ -70,16 +70,16 @@ def _render_picker(manager: SessionManager, selected_idx: int, sessions: list[di
             expand=True,
         )
         table.add_column("#", style="dim", width=3, justify="right")
-        table.add_column("会话名称", min_width=16)
-        table.add_column("摘要", style="dim")
-        table.add_column("轮数", justify="right", width=4)
-        table.add_column("更新", width=8)
+        table.add_column("Session", min_width=16)
+        table.add_column("Summary", style="dim")
+        table.add_column("Turns", justify="right", width=4)
+        table.add_column("Updated", width=8)
         table.add_column("", width=4)
 
         for i, s in enumerate(sessions):
             key = _find_key(manager, s["id"])
             num = str(i + 1)
-            name = s.get("name", "未命名")
+            name = s.get("name", "Untitled")
             summary = s.get("summary", "")
             turns = str(s.get("turns", 0))
             updated = _fmt_time(s.get("updated_at", ""))
@@ -95,7 +95,7 @@ def _render_picker(manager: SessionManager, selected_idx: int, sessions: list[di
                 row_style = ""
                 name_text = f"  {name}"
 
-            # 摘要过长截断
+            # Truncate long summaries
             if len(summary) > 40:
                 summary = summary[:38] + "…"
 
@@ -104,17 +104,17 @@ def _render_picker(manager: SessionManager, selected_idx: int, sessions: list[di
         console.print(table)
 
         if not search_query and total > MAX_DISPLAY:
-            console.print(f"  [dim]显示最近 {MAX_DISPLAY} 个，共 {total} 个。输入 / 搜索更多。[/dim]")
+            console.print(f"  [dim]Showing latest {MAX_DISPLAY} of {total}. Type / to search more.[/dim]")
 
     console.print(
         "\n  [dim]"
-        "[bold white]↑↓[/bold white] 选择  "
-        "[bold white]Enter[/bold white] 确认  "
-        "[bold white]/[/bold white] 搜索  "
-        "[bold white]N[/bold white] 新建  "
-        "[bold white]D[/bold white] 删除  "
-        "[bold white]R[/bold white] 重命名  "
-        "[bold white]Q[/bold white] 退出"
+        "[bold white]↑↓[/bold white] Select  "
+        "[bold white]Enter[/bold white] Confirm  "
+        "[bold white]/[/bold white] Search  "
+        "[bold white]N[/bold white] New  "
+        "[bold white]D[/bold white] Delete  "
+        "[bold white]R[/bold white] Rename  "
+        "[bold white]Q[/bold white] Quit"
         "[/dim]\n"
     )
 
@@ -131,11 +131,11 @@ async def pick_or_create_session() -> tuple[str, dict]:
     sessions = manager.list_sessions()
 
     if not sessions:
-        console.print("\n  [dim]首次启动，自动创建默认会话...[/dim]")
-        key, session = manager.new_session("默认会话")
+        console.print("\n  [dim]First launch, creating default session...[/dim]")
+        key, session = manager.new_session("Default Session")
         return key, session
 
-    # 搜索状态
+    # Search state
     search_query = ""
 
     def _get_visible_sessions() -> list[dict]:
@@ -148,7 +148,7 @@ async def pick_or_create_session() -> tuple[str, dict]:
 
     sessions = _get_visible_sessions()
 
-    # 找到上次活跃的 session 索引作为默认选中
+    # Find last active session index as default selection
     last_key = manager.last_active_key
     selected_idx = 0
     for i, s in enumerate(sessions):
@@ -156,7 +156,7 @@ async def pick_or_create_session() -> tuple[str, dict]:
             selected_idx = i
             break
 
-    # 用于从 key binding 传递动作
+    # Used to pass actions from key bindings
     action: dict = {"type": None}
 
     kb = KeyBindings()
@@ -184,12 +184,12 @@ async def pick_or_create_session() -> tuple[str, dict]:
         _render_picker(manager, selected_idx, sessions, search_query)
 
         try:
-            raw = (await pt.prompt_async(HTML("  <ansigreen><b>操作</b></ansigreen> > "))).strip().lower()
+            raw = (await pt.prompt_async(HTML("  <ansigreen><b>Action</b></ansigreen> > "))).strip().lower()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]再见！[/dim]")
+            console.print("\n[dim]Goodbye![/dim]")
             sys.exit(0)
 
-        # 处理 key binding 动作
+        # Handle key binding actions
         if action["type"] == "up":
             action["type"] = None
             selected_idx = (selected_idx - 1) % len(sessions) if sessions else 0
@@ -209,7 +209,7 @@ async def pick_or_create_session() -> tuple[str, dict]:
             continue
 
         if not raw:
-            # 回车（无 key binding 触发时的 fallback）
+            # Enter (fallback when no key binding triggered)
             if sessions:
                 selected = sessions[selected_idx]
                 key = _find_key(manager, selected["id"])
@@ -218,12 +218,12 @@ async def pick_or_create_session() -> tuple[str, dict]:
                 return key, session
 
         elif raw == "/" or raw.startswith("/"):
-            # 搜索模式
+            # Search mode
             query_input = raw[1:] if len(raw) > 1 else ""
             if not query_input:
                 try:
                     query_input = (await pt.prompt_async(
-                        HTML("  <ansicyan><b>搜索</b></ansicyan> > ")
+                        HTML("  <ansicyan><b>Search</b></ansicyan> > ")
                     )).strip()
                 except (EOFError, KeyboardInterrupt):
                     continue
@@ -236,14 +236,14 @@ async def pick_or_create_session() -> tuple[str, dict]:
             continue
 
         elif raw == "q":
-            console.print("\n[dim]再见！[/dim]")
+            console.print("\n[dim]Goodbye![/dim]")
             sys.exit(0)
 
         elif raw == "n":
             console.print()
             try:
                 name_raw = (await pt.prompt_async(
-                    HTML("  <ansigreen><b>会话名称</b></ansigreen> (留空自动命名) > ")
+                    HTML("  <ansigreen><b>Session name</b></ansigreen> (leave empty for auto) > ")
                 )).strip()
             except (EOFError, KeyboardInterrupt):
                 continue
@@ -257,7 +257,7 @@ async def pick_or_create_session() -> tuple[str, dict]:
             console.print()
             try:
                 num_raw = (await pt.prompt_async(
-                    HTML("  <ansired><b>删除</b></ansired> 输入序号 > ")
+                    HTML("  <ansired><b>Delete</b></ansired> enter number > ")
                 )).strip()
             except (EOFError, KeyboardInterrupt):
                 continue
@@ -267,10 +267,10 @@ async def pick_or_create_session() -> tuple[str, dict]:
                     key_to_del = _find_key(manager, sessions[idx]["id"])
                     name_del = sessions[idx].get("name", "")
                     manager.delete_session(key_to_del)
-                    console.print(f"  [dim]已删除：{name_del}[/dim]")
+                    console.print(f"  [dim]Deleted: {name_del}[/dim]")
                     sessions = _get_visible_sessions()
                     if not sessions and not search_query:
-                        key, session = manager.new_session("默认会话")
+                        key, session = manager.new_session("Default Session")
                         console.clear()
                         return key, session
                     selected_idx = min(selected_idx, max(0, len(sessions) - 1))
@@ -283,12 +283,12 @@ async def pick_or_create_session() -> tuple[str, dict]:
             console.print()
             try:
                 num_raw = (await pt.prompt_async(
-                    HTML("  <ansiyellow><b>重命名</b></ansiyellow> 输入序号 > ")
+                    HTML("  <ansiyellow><b>Rename</b></ansiyellow> enter number > ")
                 )).strip()
                 idx = int(num_raw) - 1
                 if 0 <= idx < len(sessions):
                     new_name = (await pt.prompt_async(
-                        HTML("  新名称 > ")
+                        HTML("  New name > ")
                     )).strip()
                     key_to_rename = _find_key(manager, sessions[idx]["id"])
                     manager.rename_session(key_to_rename, new_name)

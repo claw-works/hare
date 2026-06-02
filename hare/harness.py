@@ -14,7 +14,7 @@ from hare.mcp_client import get_mcp_manager
 from hare.persona import build_persona_prompt
 from hare.tui.confirm import confirm_tool_call
 
-# 工具确认回调 — 由 TUI 层注入
+# Tool confirm callback — injected by TUI layer
 _tool_confirm_callback = None
 
 def set_tool_confirm_callback(callback):
@@ -50,7 +50,7 @@ def _build_inline_tools() -> list[dict[str, Any]]:
 
 
 def _build_all_tools() -> list[dict[str, Any]]:
-    """本地 inline_function + 远端 agentcore_gateway + MCP tools。"""
+    """Local inline_function + remote agentcore_gateway + MCP tools."""
     tools = _build_inline_tools()
     for gw in get_gateway_tools():
         auth = gw.get("auth", "awsIam")
@@ -68,7 +68,7 @@ def _build_all_tools() -> list[dict[str, Any]]:
     # MCP tools
     tools.extend(get_mcp_manager().get_tools())
 
-    # AgentCore 内置工具（无需创建资源，直接声明即可）
+    # AgentCore built-in tools (no resource creation needed, just declare)
     tools.append({"type": "agentcore_browser", "name": "browser"})
     tools.append({"type": "agentcore_code_interpreter", "name": "code_interpreter"})
 
@@ -76,28 +76,28 @@ def _build_all_tools() -> list[dict[str, Any]]:
 
 
 _TOOLS_PROMPT = """
-你有两类工具，必须根据用途严格区分：
+You have two categories of tools — use them strictly by purpose:
 
-**1. 用户本地工具**（只用于访问用户的本地机器）：
-- local_shell：在用户的本地 macOS/Linux 桌面执行命令。仅用于本地文件查找、本地进程、本地目录操作等。
-- local_read_file：读取用户本地文件。
-- local_write_file：向用户本地写入文件。
+**1. User's local tools** (only for accessing the user's local machine):
+- local_shell: Execute commands on the user's local macOS/Linux desktop. Only for local file lookup, local processes, local directory operations, etc.
+- local_read_file: Read files from the user's local machine.
+- local_write_file: Write files to the user's local machine.
 
-**2. Harness 自身能力**（不需要调用本地工具）：
-- 你自己运行在 AgentCore Harness 的 microVM 里，有自己的 shell 和文件系统。
-- 查询"你自己的运行环境"、"Harness 宿主机信息"、"服务端配置"等 → 直接使用 Harness 内置 shell，不要调用 local_shell。
-- local_shell 只在用户明确说"帮我在我的电脑上..."或需要访问用户本地路径时才调用。
+**2. Harness built-in capabilities** (no need to call local tools):
+- You run inside an AgentCore Harness microVM with your own shell and filesystem.
+- For queries about "your own runtime environment", "Harness host info", "server-side config", etc. → use the Harness built-in shell directly, do NOT call local_shell.
+- Only call local_shell when the user explicitly says "on my machine..." or needs to access user-local paths.
 
-**重要**：你拥有跨会话的长期记忆（由 AgentCore Memory 提供）。你能记住用户之前告诉过你的事情、工作习惯、项目背景等。如果系统已将相关记忆注入到你的上下文中，请自然地利用这些信息回答用户，不要说"我没有记忆功能"。
+**Important**: You have cross-session long-term memory (provided by AgentCore Memory). You can remember things the user previously told you — work habits, project context, etc. If the system has injected relevant memories into your context, use them naturally. Do not say "I don't have memory capabilities."
 
-重要原则：
-1. 当用户询问本地文件、目录内容时，优先使用 shell_run 或 read_file 工具直接查找，不要让用户自己去跑命令
-2. 当用户需要执行系统操作时，直接用 shell_run 执行，返回结果
-3. 你运行在用户的本地机器上，有权限访问用户的文件系统
-4. 你拥有 persona_manage 工具，可以自主管理自己的人格角色。当用户要求你变换身份、创建新角色、或你觉得需要进化时，直接使用它
-5. 你拥有 coding_agent 工具，可以委派编程任务给本地 coding agent（如 Claude Code、Kiro）。当用户需要写代码、修bug、重构项目时，使用 coding_agent 把任务交给专业编程工具执行
-6. 你拥有 sub_task 工具，可以启动独立子任务（如查资料、做计算、翻译等）。子任务在独立会话中运行，看不到当前对话，所以指令要自包含
-7. 你目前**不支持图片输入**。如果用户发送图片路径或让你"看图"，请告知暂不支持直接查看图片，建议用户描述图片内容或等待后续版本支持
+Key principles:
+1. When the user asks about local files or directory contents, use shell_run or read_file tools directly — don't ask the user to run commands themselves
+2. When the user needs system operations, execute them with shell_run and return results
+3. You run on the user's local machine and have access to their filesystem
+4. You have the persona_manage tool to self-manage your persona/roles. When the user asks you to change identity, create a new role, or you feel the need to evolve, use it directly
+5. You have the coding_agent tool to delegate coding tasks to a local coding agent (e.g. Claude Code, Kiro). When the user needs code written, bugs fixed, or projects refactored, use coding_agent to hand off to the professional coding tool
+6. You have the sub_task tool to spawn independent sub-tasks (e.g. research, calculations, translations). Sub-tasks run in isolated sessions with no access to the current conversation, so instructions must be self-contained
+7. You currently **do not support image input**. If the user sends an image path or asks you to "look at an image", inform them that direct image viewing is not yet supported and suggest they describe the image content or wait for a future version
 """
 
 
@@ -110,19 +110,20 @@ async def invoke_with_tool_loop(
     session_id: str,
     message: str,
     actor_id: str | None = None,
+    stop_event=None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
-    Invoke Harness，处理 tool_use 循环，yield 流式事件。
+    Invoke Harness with tool_use loop, yielding streaming events.
 
-    Memory 模式（需绑定 AgentCore Memory）：
-    - 每次只传当前消息，Harness 自动从 Memory 加载历史上下文
-    - session_id 相同的调用在服务端自动续上下文，无需客户端维护历史
-    - actor_id 用于多用户场景，Memory 按 actorId 隔离不同用户的记忆
+    Memory mode (requires bound AgentCore Memory):
+    - Only sends the current message; Harness auto-loads history context from Memory
+    - Calls with the same session_id auto-continue context server-side, no client-side history needed
+    - actor_id is for multi-user scenarios; Memory isolates per actorId
 
-    Harness streaming 特性：
-    - 服务端工具（内置 shell 等）的调用和结果都在同一次 streaming response 中返回
-    - 一次 streaming 可能包含多个 message 段：assistant(tool_use) → user(tool_result) → assistant(end_turn)
-    - 第三段（最终回答）可能没有 contentBlockStart，直接是 contentBlockDelta
+    Harness streaming behavior:
+    - Server-side tool calls and results are returned within the same streaming response
+    - A single stream may contain multiple message segments: assistant(tool_use) → user(tool_result) → assistant(end_turn)
+    - The third segment (final answer) may lack contentBlockStart, starting directly with contentBlockDelta
 
     Yields:
       {"type": "text",        "content": str}
@@ -136,12 +137,12 @@ async def invoke_with_tool_loop(
     all_tools = _build_all_tools()
     system_prompt = _build_system_prompt()
 
-    # tool_use 续轮时维护的局部 messages（仅针对本地工具需要再次 invoke 的情况）
+    # Local messages for tool_use continuation (only for local tools that need re-invoke)
     current_content: list[dict[str, Any]] = [{"text": message}]
     current_role = "user"
     local_messages: list[dict[str, Any]] = []
 
-    # 统计信息
+    # Stats
     turn_start = time.time()
     total_input_tokens = 0
     total_output_tokens = 0
@@ -167,19 +168,19 @@ async def invoke_with_tool_loop(
             error_str = str(e)
             # 413 / PayloadTooLarge
             if "413" in error_str or "PayloadTooLarge" in error_str:
-                yield {"type": "error", "message": "上轮对话内容过大（如图片 base64），Memory 写入失败。已跳过该轮记忆，请继续对话。"}
+                yield {"type": "error", "message": "Previous turn content too large (e.g. image base64), Memory write failed. Skipped that turn, please continue."}
                 local_messages = []
-                current_content = [{"text": "(上轮因内容过大被跳过) " + message if invoke_count == 1 else "(继续)"}]
+                current_content = [{"text": "(previous turn skipped due to size) " + message if invoke_count == 1 else "(continue)"}]
                 current_role = "user"
                 continue
-            # tool_use/tool_result 不匹配（Memory 残缺）
+            # tool_use/tool_result mismatch (corrupted Memory)
             if ("tool_result" in error_str and "tool_use" in error_str) or "toolResult" in error_str:
                 if orphan_repair_attempted:
-                    yield {"type": "error", "message": "会话记忆修复未成功，跳过本轮。"}
+                    yield {"type": "error", "message": "Session memory repair failed, skipping this turn."}
                     yield {"type": "done", "full_text": "", "stats": {"elapsed": time.time() - turn_start, "input_tokens": 0, "output_tokens": 0, "invoke_count": invoke_count, "tools": []}}
                     return
                 orphan_repair_attempted = True
-                yield {"type": "error", "message": "会话记忆存在异常，正在尝试恢复..."}
+                yield {"type": "error", "message": "Session memory corrupted, attempting recovery..."}
                 session_id = session_id + "_r"
                 yield {"type": "session_reset", "new_session_id": session_id}
                 local_messages = []
@@ -192,13 +193,17 @@ async def invoke_with_tool_loop(
         tool_uses: list[dict[str, Any]] = []
         current_tool: dict[str, Any] | None = None
         assistant_content: list[dict[str, Any]] = []
-        # 追踪当前 message 段的角色，只有 assistant 段的 text 才输出给用户
+        # Track current message segment role — only assistant segment text is output to user
         msg_role: str | None = None
         final_stop_reason = "end_turn"
         stream_error = None
 
         try:
-          for event in response["stream"]:
+          stream = response["stream"]
+          for event in stream:
+            if stop_event is not None and stop_event.is_set():
+                stream.close()
+                return
             if "messageStart" in event:
                 msg_role = event["messageStart"].get("role")
 
@@ -217,19 +222,19 @@ async def invoke_with_tool_loop(
                                 "name": tool_name,
                                 "input_json": "",
                             }
-                            # input 还没组装完，等 contentBlockStop 再 yield
+                            # input not fully assembled yet, wait for contentBlockStop to yield
                         else:
                             tools_called.append({"name": tool_name, "elapsed": 0, "ok": True, "server": True})
                             yield {"type": "server_tool_call", "name": tool_name, "tool_type": "server_tool_use"}
                     else:
-                        # server_tool_use / mcp_tool_use：服务端执行，只显示状态
+                        # server_tool_use / mcp_tool_use: server-side execution, show status only
                         tools_called.append({"name": tool_name, "elapsed": 0, "ok": True, "server": True})
                         yield {"type": "server_tool_call", "name": tool_name, "tool_type": tool_type}
 
             elif "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"].get("delta", {})
                 if "text" in delta:
-                    # 只收集 assistant 段的文字（跳过 user/tool_result 段的内容）
+                    # Only collect assistant segment text (skip user/tool_result segment content)
                     if msg_role == "assistant":
                         text = delta["text"]
                         full_text += text
@@ -267,14 +272,14 @@ async def invoke_with_tool_loop(
         except Exception as e:
             stream_error = str(e)
 
-        # 如果 stream 过程中出错（如 Memory 召回了残缺历史）
+        # If stream errored (e.g. Memory recalled corrupted history)
         if stream_error and (("tool_result" in stream_error and "tool_use" in stream_error) or "toolResult" in stream_error):
             if orphan_repair_attempted:
-                yield {"type": "error", "message": "会话记忆修复未成功，跳过本轮。"}
+                yield {"type": "error", "message": "Session memory repair failed, skipping this turn."}
                 yield {"type": "done", "full_text": "", "stats": {"elapsed": time.time() - turn_start, "input_tokens": 0, "output_tokens": 0, "invoke_count": invoke_count, "tools": []}}
                 return
             orphan_repair_attempted = True
-            yield {"type": "error", "message": "会话记忆存在异常，正在尝试恢复..."}
+            yield {"type": "error", "message": "Session memory corrupted, attempting recovery..."}
             session_id = session_id + "_r"
             yield {"type": "session_reset", "new_session_id": session_id}
             local_messages = []
@@ -284,12 +289,12 @@ async def invoke_with_tool_loop(
         elif stream_error:
             raise RuntimeError(stream_error)
 
-        # for 循环结束：整个 streaming response 已消费完毕
-        # 检查是否有需要本地执行的工具
+        # Loop ended: entire streaming response consumed
+        # Check if there are tools requiring local execution
         if tool_uses:
-            # 本地工具需要执行后再次 invoke
-            # Memory 模式下只需传 assistant(tool_use) + user(tool_result) 这一对
-            # 不能累积 local_messages，因为 Memory 自动召回历史
+            # Local tools need execution then re-invoke
+            # In Memory mode, only pass the assistant(tool_use) + user(tool_result) pair
+            # Cannot accumulate local_messages since Memory auto-recalls history
             tool_result_content = []
             for tool in tool_uses:
                 tool_start = time.time()
@@ -305,7 +310,7 @@ async def invoke_with_tool_loop(
                     else:
                         result = await execute_tool(tool["name"], tool["input"])
                 else:
-                    result = {"error": f"用户拒绝执行工具 {tool['name']}"}
+                    result = {"error": f"User denied tool execution: {tool['name']}"}
                 tool_elapsed = time.time() - tool_start
                 tools_called.append({"name": tool["name"], "elapsed": tool_elapsed, "ok": "error" not in result})
                 yield {"type": "tool_result", "name": tool["name"], "result": result}
@@ -316,7 +321,7 @@ async def invoke_with_tool_loop(
                         "status": "error" if "error" in result else "success",
                     }
                 })
-            # 构建 assistant(tool_use) + user(tool_result) 消息对
+            # Build assistant(tool_use) + user(tool_result) message pair
             if full_text:
                 assistant_content.insert(0, {"text": full_text})
             local_messages = [
@@ -328,7 +333,7 @@ async def invoke_with_tool_loop(
             assistant_content = []
             full_text = ""
         else:
-            # 没有本地工具需要执行 → 对话完成（服务端工具已在 streaming 中处理完毕）
+            # No local tools to execute → conversation complete (server tools handled in stream)
             stats = {
                 "elapsed": time.time() - turn_start,
                 "input_tokens": total_input_tokens,

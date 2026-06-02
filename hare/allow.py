@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""工具调用 auto-allow 机制。
-支持白名单配置（通配符），未在白名单的工具执行前询问用户。
+"""Tool call auto-allow mechanism.
+Supports allowlist config (with wildcards); tools not in the allowlist prompt user before execution.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ TOOLS_YAML = HARE_DIR / "tools.yaml"
 
 
 def _load_auto_allow() -> list[str]:
-    """从 tools.yaml 读取 auto_allow 列表。"""
+    """Read auto_allow list from tools.yaml."""
     try:
         import yaml
         if TOOLS_YAML.exists():
@@ -25,7 +25,7 @@ def _load_auto_allow() -> list[str]:
 
 
 def _save_auto_allow(patterns: list[str]) -> None:
-    """把 auto_allow 列表写回 tools.yaml。"""
+    """Write auto_allow list back to tools.yaml."""
     try:
         import yaml
         cfg = {}
@@ -41,12 +41,12 @@ def _save_auto_allow(patterns: list[str]) -> None:
 
 
 def is_allowed(tool_name: str) -> bool:
-    """检查工具是否在 auto_allow 白名单内（支持通配符）。"""
+    """Check if tool is in the auto_allow list (supports wildcards)."""
     patterns = _load_auto_allow()
     return any(fnmatch.fnmatch(tool_name, p) for p in patterns)
 
 
-# 会话级临时允许列表（本次运行有效，不写磁盘）
+# Session-level temporary allow list (valid for this run only, not persisted)
 _session_allowed: set[str] = set()
 
 

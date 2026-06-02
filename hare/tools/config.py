@@ -5,24 +5,24 @@ import yaml
 
 DEFAULT_CONFIG = {
     "local_tools": [
-        {"name": "local_shell",      "enabled": True, "description": "在本机执行 shell 命令"},
-        {"name": "local_read_file",  "enabled": True, "description": "读取本地文件"},
-        {"name": "local_write_file", "enabled": True, "description": "写入本地文件"},
-        {"name": "persona_manage",   "enabled": True, "description": "管理自身人设角色"},
+        {"name": "local_shell",      "enabled": True, "description": "Execute shell commands on local machine"},
+        {"name": "local_read_file",  "enabled": True, "description": "Read local files"},
+        {"name": "local_write_file", "enabled": True, "description": "Write local files"},
+        {"name": "persona_manage",   "enabled": True, "description": "Manage persona roles"},
     ],
     "gateway_tools": [
         {
             "name": "agentmate_tools",
             "enabled": False,
             "gateway_arn": "",
-            "description": "AgentMate MCP 工具集",
+            "description": "AgentMate MCP toolset",
             "auth": "awsIam",
         }
     ],
 }
 
 def load_tools_config() -> dict:
-    """加载 ~/.hare/tools.yaml，找不到时返回默认配置。"""
+    """Load ~/.hare/tools.yaml, returns default config if not found."""
     path = Path.home() / ".hare" / "tools.yaml"
     if path.exists():
         try:
@@ -39,7 +39,7 @@ def get_enabled_local_tools() -> list[str]:
     config = load_tools_config()
     configured = {t["name"] for t in config.get("local_tools", [])}
     enabled = [t["name"] for t in config.get("local_tools", []) if t.get("enabled", True)]
-    # 内置工具如果不在配置文件里，默认启用
+    # Built-in tools not in config file are enabled by default
     for name in _BUILTIN_TOOLS:
         if name not in configured:
             enabled.append(name)

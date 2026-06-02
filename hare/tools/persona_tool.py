@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""人设管理工具 — 让 Hare 自己管理角色。"""
+"""Persona management tool — lets Hare self-manage its roles."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,15 +15,15 @@ def manage_persona(
     data: dict | None = None,
 ) -> dict:
     """
-    管理人设角色。
+    Manage persona roles.
 
     action:
-      - list: 列出所有可用人格
-      - get: 获取指定人格详情
-      - create: 创建新人格（name + data）
-      - update: 更新已有人格（name + data，合并覆盖）
-      - switch: 切换当前激活人格
-      - delete: 删除人格（不能删除当前激活的）
+      - list: List all available personas
+      - get: Get details of a specific persona
+      - create: Create a new persona (name + data)
+      - update: Update an existing persona (name + data, merge-override)
+      - switch: Switch the currently active persona
+      - delete: Delete a persona (cannot delete the currently active one)
     """
     PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -38,58 +38,58 @@ def manage_persona(
 
     if action == "get":
         if not name:
-            return {"error": "需要指定 name"}
+            return {"error": "name is required"}
         path = PERSONAS_DIR / f"{name}.yaml"
         if not path.exists():
-            return {"error": f"人格 '{name}' 不存在"}
+            return {"error": f"Persona '{name}' does not exist"}
         return {"persona": _load_yaml(path)}
 
     if action == "create":
         if not name:
-            return {"error": "需要指定 name"}
+            return {"error": "name is required"}
         if not data:
-            return {"error": "需要指定 data（至少包含 name, emoji, vibe）"}
+            return {"error": "data is required (must include at least name, emoji, vibe)"}
         path = PERSONAS_DIR / f"{name}.yaml"
         if path.exists():
-            return {"error": f"人格 '{name}' 已存在，使用 update 来修改"}
+            return {"error": f"Persona '{name}' already exists, use update to modify"}
         _save_yaml(path, data)
-        return {"success": True, "message": f"已创建人格 '{name}'", "persona": data}
+        return {"success": True, "message": f"Created persona '{name}'", "persona": data}
 
     if action == "update":
         if not name:
-            return {"error": "需要指定 name"}
+            return {"error": "name is required"}
         path = PERSONAS_DIR / f"{name}.yaml"
         if not path.exists():
-            return {"error": f"人格 '{name}' 不存在"}
+            return {"error": f"Persona '{name}' does not exist"}
         existing = _load_yaml(path)
         if data:
             existing.update(data)
         _save_yaml(path, existing)
-        return {"success": True, "message": f"已更新人格 '{name}'", "persona": existing}
+        return {"success": True, "message": f"Updated persona '{name}'", "persona": existing}
 
     if action == "switch":
         if not name:
-            return {"error": "需要指定 name"}
+            return {"error": "name is required"}
         path = PERSONAS_DIR / f"{name}.yaml"
         if not path.exists():
-            return {"error": f"人格 '{name}' 不存在"}
+            return {"error": f"Persona '{name}' does not exist"}
         identity = _load_yaml(IDENTITY_FILE)
         identity["active"] = name
         _save_yaml(IDENTITY_FILE, identity)
         persona = _load_yaml(path)
-        return {"success": True, "message": f"已切换到 '{name}'", "persona": persona}
+        return {"success": True, "message": f"Switched to '{name}'", "persona": persona}
 
     if action == "delete":
         if not name:
-            return {"error": "需要指定 name"}
+            return {"error": "name is required"}
         if name == "hare":
-            return {"error": "默认人格 'hare' 不可删除"}
+            return {"error": "Default persona 'hare' cannot be deleted"}
         if name == get_active_persona_name():
-            return {"error": f"不能删除当前激活的人格 '{name}'，请先切换"}
+            return {"error": f"Cannot delete the active persona '{name}', switch first"}
         path = PERSONAS_DIR / f"{name}.yaml"
         if not path.exists():
-            return {"error": f"人格 '{name}' 不存在"}
+            return {"error": f"Persona '{name}' does not exist"}
         path.unlink()
-        return {"success": True, "message": f"已删除人格 '{name}'"}
+        return {"success": True, "message": f"Deleted persona '{name}'"}
 
-    return {"error": f"未知 action: '{action}'，可用: list/get/create/update/switch/delete"}
+    return {"error": f"Unknown action: '{action}', available: list/get/create/update/switch/delete"}

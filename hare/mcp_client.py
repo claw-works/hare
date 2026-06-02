@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""本地 MCP server 管理器。
-支持标准 mcp.json 格式，兼容 Claude Code / Cursor 等工具的配置文件。
+"""Local MCP server manager.
+Supports standard mcp.json format, compatible with Claude Code / Cursor config files.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ PROJECT_MCP_CONFIG = Path(".hare") / "mcp.json"
 
 
 def _load_mcp_config() -> dict:
-    """加载 mcp.json，项目级配置覆盖全局同名 server。"""
+    """Load mcp.json; project-level config overrides global servers of the same name."""
     global_cfg = {}
     project_cfg = {}
 
@@ -46,15 +46,15 @@ class MCPTransport:
         raise NotImplementedError
 
     async def notify(self, notification: dict) -> None:
-        """发送通知（fire-and-forget，不等待响应）。"""
-        pass  # 默认 no-op，子类按需 override
+        """Send notification (fire-and-forget, no response expected)."""
+        pass  # Default no-op, subclasses override as needed
 
     async def close(self) -> None:
         pass
 
 
 class StdioTransport(MCPTransport):
-    """stdio 传输：管理子进程，通过 stdin/stdout 收发 JSON-RPC。"""
+    """stdio transport: manages subprocess, sends/receives JSON-RPC via stdin/stdout."""
 
     def __init__(self, command: str, args: list[str], env: dict | None = None):
         self.command = command
@@ -85,7 +85,7 @@ class StdioTransport(MCPTransport):
             return json.loads(line)
 
     async def notify(self, notification: dict) -> None:
-        """发送通知，fire-and-forget。"""
+        """Send notification, fire-and-forget."""
         if self._proc and self._proc.stdin:
             payload = json.dumps(notification) + "\n"
             self._proc.stdin.write(payload.encode())
@@ -104,7 +104,7 @@ class StdioTransport(MCPTransport):
 
 
 class SSETransport(MCPTransport):
-    """SSE 传输：通过 HTTP SSE 连接收发。"""
+    """SSE transport: sends/receives via HTTP SSE connection."""
 
     def __init__(self, url: str, headers: dict | None = None):
         self.url = url.rstrip("/")
@@ -126,7 +126,7 @@ class SSETransport(MCPTransport):
 
 
 class StreamableHTTPTransport(MCPTransport):
-    """Streamable HTTP 传输（MCP 2025-03 规范），支持 mcp-session-id。"""
+    """Streamable HTTP transport (MCP 2025-03 spec), supports mcp-session-id."""
 
     def __init__(self, url: str, headers: dict | None = None):
         self.url = url.rstrip("/")
@@ -146,7 +146,7 @@ class StreamableHTTPTransport(MCPTransport):
         return headers
 
     def _parse_response(self, resp: httpx.Response) -> dict:
-        """解析响应，支持 SSE 和 JSON 两种格式。"""
+        """Parse response, supports both SSE and JSON formats."""
         if "mcp-session-id" in resp.headers:
             self._session_id = resp.headers["mcp-session-id"]
         content_type = resp.headers.get("content-type", "")
@@ -169,20 +169,20 @@ class StreamableHTTPTransport(MCPTransport):
         return self._parse_response(resp)
 
     async def notify(self, notification: dict) -> None:
-        """发送通知，fire-and-forget（不等响应）。"""
+        """Send notification, fire-and-forget (no response expected)."""
         try:
             await self._client.post(
                 self.url, json=notification, headers=self._build_headers()
             )
         except Exception:
-            pass  # 通知失败无所谓
+            pass  # Notification failure is acceptable
 
     async def close(self) -> None:
         await self._client.aclose()
 
 
 class MCPServer:
-    """单个 MCP server 连接。"""
+    """Single MCP server connection."""
 
     def __init__(self, name: str, transport: MCPTransport):
         self.name = name
@@ -191,11 +191,11 @@ class MCPServer:
         self._initialized = False
 
     async def initialize(self) -> None:
-        """发送 initialize + initialized 握手，然后获取工具列表。"""
+        """Send initialize + initialized handshake, then get tool list."""
         if isinstance(self.transport, StdioTransport):
             await self.transport.start()
 
-        # initialize 握手
+        # initialize handshake
         await self.transport.send({
             "jsonrpc": "2.0",
             "id": 1,
@@ -207,13 +207,13 @@ class MCPServer:
             },
         })
 
-        # initialized 通知（notification，无需等待响应）
+        # initialized notification (no response expected)
         await self.transport.notify({
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
         })
 
-        # 获取工具列表
+        # Get tool list
         tools_resp = await self.transport.send({
             "jsonrpc": "2.0",
             "id": 2,
@@ -228,7 +228,7 @@ class MCPServer:
         return self._tools
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """调用 MCP server 上的工具。"""
+        """Call a tool on the MCP server."""
         resp = await self.transport.send({
             "jsonrpc": "2.0",
             "id": 3,
@@ -238,7 +238,7 @@ class MCPServer:
         if "error" in resp:
             return {"error": resp["error"].get("message", str(resp["error"]))}
         result = resp.get("result", {})
-        # MCP 工具返回 content 数组，提取文本
+        # MCP tools return content array, extract text
         content = result.get("content", [])
         texts = [c.get("text", "") for c in content if c.get("type") == "text"]
         return {"output": "\n".join(texts)} if texts else {"output": json.dumps(result)}
@@ -248,14 +248,14 @@ class MCPServer:
 
 
 class MCPManager:
-    """管理所有 MCP server 连接。"""
+    """Manages all MCP server connections."""
 
     def __init__(self):
         self._servers: dict[str, MCPServer] = {}
         self._initialized = False
 
     async def initialize(self) -> None:
-        """加载配置并连接所有 MCP server。"""
+        """Load config and connect all MCP servers."""
         if self._initialized:
             return
         config = _load_mcp_config()
@@ -267,7 +267,7 @@ class MCPManager:
                 self._servers[name] = server
             except Exception as e:
                 import sys
-                print(f"[MCP] 连接 {name} 失败: {e}", file=sys.stderr)
+                print(f"[MCP] Failed to connect {name}: {e}", file=sys.stderr)
         self._initialized = True
 
     def _create_transport(self, cfg: dict) -> MCPTransport:
@@ -289,10 +289,10 @@ class MCPManager:
                 headers=cfg.get("headers"),
             )
         else:
-            raise ValueError(f"不支持的 MCP 传输类型: {transport_type}")
+            raise ValueError(f"Unsupported MCP transport type: {transport_type}")
 
     def get_tools(self) -> list[dict[str, Any]]:
-        """返回所有 MCP 工具的 inline_function 定义（兼容 harness 格式）。"""
+        """Return all MCP tools as inline_function definitions (harness-compatible)."""
         tools = []
         for server_name, server in self._servers.items():
             for tool in server.tools:
@@ -309,21 +309,21 @@ class MCPManager:
         return tools
 
     async def call_tool(self, server_name: str, tool_name: str, arguments: dict) -> dict:
-        """调用指定 server 上的工具。"""
+        """Call a tool on the specified server."""
         server = self._servers.get(server_name)
         if not server:
-            return {"error": f"MCP server '{server_name}' 未连接"}
+            return {"error": f"MCP server '{server_name}' not connected"}
         return await server.call_tool(tool_name, arguments)
 
     async def call_tool_by_full_name(self, full_name: str, arguments: dict) -> dict:
-        """通过完整工具名 (mcp__{server}__{tool}) 调用。"""
+        """Call by full tool name (mcp__{server}__{tool})."""
         parts = full_name.split("__", 2)
         if len(parts) != 3 or parts[0] != "mcp":
-            return {"error": f"无效的 MCP 工具名: {full_name}"}
+            return {"error": f"Invalid MCP tool name: {full_name}"}
         return await self.call_tool(parts[1], parts[2], arguments)
 
     async def close(self) -> None:
-        """关闭所有 MCP server 连接。"""
+        """Close all MCP server connections."""
         for server in self._servers.values():
             try:
                 await server.close()
@@ -333,7 +333,7 @@ class MCPManager:
         self._initialized = False
 
 
-# 模块级单例
+# Module-level singleton
 _manager: MCPManager | None = None
 
 

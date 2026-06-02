@@ -1,11 +1,11 @@
-"""Session 管理模块 — 持久化多会话元数据。
+"""Session management — persists multi-session metadata.
 
-存储格式 (~/.hare/sessions.json):
+Storage format (~/.hare/sessions.json):
 {
   "sessions": {
     "<uuid>": {
       "id": "huuid...",
-      "name": "默认会话",
+      "name": "Default Session",
       "created_at": "2026-05-22T21:00:00",
       "updated_at": "2026-05-22T21:57:00"
     }
@@ -31,9 +31,9 @@ def _load_store() -> dict:
     if SESSIONS_FILE.exists():
         try:
             data = json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
-            # 迁移旧格式：{"default": "h..."} → 新格式 {"sessions": {}, "last_active": null}
+            # Migrate old format: {"default": "h..."} → new format {"sessions": {}, "last_active": null}
             if "sessions" not in data:
-                # 旧格式，直接丢弃，返回空结构（旧的 session_id 在服务端已有历史，不可复用）
+                # Old format, discard and return empty structure (old session_ids have server-side history, not reusable)
                 return {"sessions": {}, "last_active": None}
             return data
         except Exception:
@@ -53,35 +53,35 @@ def _new_session_id() -> str:
 
 
 class SessionManager:
-    """多 session 管理器，持久化到 ~/.hare/sessions.json。"""
+    """Multi-session manager, persisted to ~/.hare/sessions.json."""
 
     def __init__(self) -> None:
         self._store = _load_store()
 
-    # ── 查询 ──────────────────────────────────────────────────────────────
+    # ── Query ─────────────────────────────────────────────────────────────
 
     def list_sessions(self) -> list[dict]:
-        """返回所有 session 列表，按 updated_at 倒序。"""
+        """Return all sessions, sorted by updated_at descending."""
         sessions = list(self._store["sessions"].values())
         sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
         return sessions
 
     def get_session(self, key: str) -> dict | None:
-        """按 uuid key 获取 session。"""
+        """Get session by uuid key."""
         return self._store["sessions"].get(key)
 
     @property
     def last_active_key(self) -> str | None:
         return self._store.get("last_active")
 
-    # ── 创建 / 切换 ────────────────────────────────────────────────────────
+    # ── Create / Switch ─────────────────────────────────────────────────────
 
     def new_session(self, name: str = "", persona: str = "") -> tuple[str, dict]:
-        """新建 session，返回 (key, session_dict)。"""
+        """Create a new session, return (key, session_dict)."""
         from hare.persona import get_active_persona_name
         key = str(uuid.uuid4())
         session_id = _new_session_id()
-        name = name.strip() or f"会话 {len(self._store['sessions']) + 1}"
+        name = name.strip() or f"Session {len(self._store['sessions']) + 1}"
         entry = {
             "id": session_id,
             "name": name,
@@ -97,19 +97,19 @@ class SessionManager:
         return key, entry
 
     def activate(self, key: str) -> dict | None:
-        """激活指定 session（设为 last_active），并恢复该 session 绑定的 persona。"""
+        """Activate the given session (set as last_active) and restore its bound persona."""
         session = self._store["sessions"].get(key)
         if session:
             self._store["last_active"] = key
             _save_store(self._store)
-            # 恢复 session 绑定的 persona
+            # Restore session-bound persona
             persona_name = session.get("persona")
             if persona_name:
                 from hare.persona import set_active_persona
                 set_active_persona(persona_name)
         return session
 
-    # ── 删除 / 重命名 ──────────────────────────────────────────────────────
+    # ── Delete / Rename ────────────────────────────────────────────────────
 
     def delete_session(self, key: str) -> bool:
         if key in self._store["sessions"]:
@@ -130,7 +130,7 @@ class SessionManager:
         return False
 
     def increment_turns(self, key: str) -> int:
-        """增加对话轮数，返回新的轮数。"""
+        """Increment turn count, return the new count."""
         if key in self._store["sessions"]:
             session = self._store["sessions"][key]
             session["turns"] = session.get("turns", 0) + 1
@@ -140,7 +140,7 @@ class SessionManager:
         return 0
 
     def update_summary(self, key: str, title: str, summary: str) -> None:
-        """更新会话标题和摘要。"""
+        """Update session title and summary."""
         if key in self._store["sessions"]:
             session = self._store["sessions"][key]
             if title.strip():
@@ -150,17 +150,17 @@ class SessionManager:
             session["updated_at"] = _now()
             _save_store(self._store)
 
-    # ── 兼容旧接口 ──────────────────────────────────────────────────────────
+    # ── Legacy API ─────────────────────────────────────────────────────────
 
     def get_or_create_default(self) -> tuple[str, dict]:
-        """获取最近使用的 session，若无则新建。"""
+        """Get the most recently used session, or create a new one."""
         key = self._store.get("last_active")
         if key and key in self._store["sessions"]:
             return key, self._store["sessions"][key]
-        return self.new_session("默认会话")
+        return self.new_session("Default Session")
 
 
-# 模块级单例
+# Module-level singleton
 _manager: SessionManager | None = None
 
 
@@ -171,7 +171,7 @@ def get_manager() -> SessionManager:
     return _manager
 
 
-# ── 兼容旧接口 ────────────────────────────────────────────────────────────
+# ── Legacy API ────────────────────────────────────────────────────────────
 
 def new_session(name: str) -> str:
     _, entry = get_manager().new_session(name)

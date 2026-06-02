@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""hare onboarding — 引导员工完成初始化配置。
-只面向员工，不做运维操作（IAM/Harness/Memory 的创建由运维执行 scripts/ 脚本完成）。
+"""hare onboarding — guide users through initial configuration.
+User-facing only; ops tasks (IAM/Harness/Memory creation) are handled via scripts/.
 """
 from __future__ import annotations
 
@@ -44,11 +44,11 @@ def _save_env(key: str, value: str) -> None:
 
 
 def run_onboarding() -> None:
-    """运行员工 onboarding 流程。"""
+    """Run user onboarding flow."""
     console.print(Panel(
-        "[bold green]🐇 hare 初始化向导[/bold green]\n"
-        "[dim]引导你完成初始配置，约需 1-2 分钟\n"
-        "Harness ARN 和 Memory 由 IT/运维提前部署，向他们索取即可[/dim]",
+        "[bold green]🐇 hare setup wizard[/bold green]\n"
+        "[dim]Guides you through initial configuration, takes 1-2 minutes\n"
+        "Harness ARN and Memory are pre-deployed by IT/ops — ask them for the values[/dim]",
         border_style="green",
         padding=(1, 4),
     ))
@@ -58,12 +58,12 @@ def run_onboarding() -> None:
         load_dotenv(ENV_FILE, override=False)
 
     # ── Step 1: AWS Region & Profile ─────────────────────────────────────
-    _section(1, 3, "AWS 凭证配置")
+    _section(1, 3, "AWS Credentials")
 
     region = os.environ.get("AWS_REGION", "")
     if region:
-        _ok(f"AWS_REGION 已配置: {region}")
-        if Confirm.ask("  是否修改?", default=False):
+        _ok(f"AWS_REGION configured: {region}")
+        if Confirm.ask("  Change?", default=False):
             region = ""
     if not region:
         region = Prompt.ask("  AWS Region", default="us-west-2")
@@ -72,26 +72,26 @@ def run_onboarding() -> None:
 
     profile = os.environ.get("AWS_PROFILE", "")
     if profile:
-        _ok(f"AWS_PROFILE 已配置: {profile}")
-        if Confirm.ask("  是否修改?", default=False):
+        _ok(f"AWS_PROFILE configured: {profile}")
+        if Confirm.ask("  Change?", default=False):
             profile = ""
     if not profile:
         profile = Prompt.ask("  AWS Profile", default="default")
         _save_env("AWS_PROFILE", profile)
         os.environ["AWS_PROFILE"] = profile
 
-    # ── Step 2: 验证 AWS 凭证 ─────────────────────────────────────────────
-    _section(2, 3, "验证 AWS 凭证")
+    # ── Step 2: Verify AWS Credentials ────────────────────────────────────
+    _section(2, 3, "Verify AWS Credentials")
 
     try:
         session = boto3.Session(region_name=region, profile_name=profile)
         sts = session.client("sts")
         identity = sts.get_caller_identity()
-        _ok(f"凭证有效 — Account: {identity['Account']}, User: {identity['Arn'].split('/')[-1]}")
+        _ok(f"Credentials valid — Account: {identity['Account']}, User: {identity['Arn'].split('/')[-1]}")
     except Exception as e:
-        _err(f"AWS 凭证无效: {e}")
-        console.print("  请检查 ~/.aws/credentials 中的 profile 配置")
-        console.print("  修正后重新运行: [bold]uv run hare --setup[/bold]")
+        _err(f"Invalid AWS credentials: {e}")
+        console.print("  Check the profile config in ~/.aws/credentials")
+        console.print("  Then re-run: [bold]uv run hare --setup[/bold]")
         sys.exit(1)
 
     # ── Step 3: HARNESS_ARN ───────────────────────────────────────────────
@@ -101,47 +101,47 @@ def run_onboarding() -> None:
     is_placeholder = not harness_arn or "ACCOUNT_ID" in harness_arn
 
     if harness_arn and not is_placeholder:
-        _ok(f"HARNESS_ARN 已配置: {harness_arn}")
-        if Confirm.ask("  是否修改?", default=False):
+        _ok(f"HARNESS_ARN configured: {harness_arn}")
+        if Confirm.ask("  Change?", default=False):
             is_placeholder = True
 
     if is_placeholder:
-        console.print("  [dim]请向 IT/运维索取 Harness ARN，格式如：[/dim]")
+        console.print("  [dim]Get the Harness ARN from IT/ops, format:[/dim]")
         console.print("  [dim]arn:aws:bedrock-agentcore:us-west-2:123456789012:harness/abc123[/dim]")
         harness_arn = Prompt.ask("  HARNESS_ARN")
 
-    # 验证 Harness 可访问
+    # Verify Harness is accessible
     try:
         harness_id = harness_arn.split("/")[-1]
         control = session.client("bedrock-agentcore-control")
         detail = control.get_harness(harnessId=harness_id)
         status = detail.get("status", "UNKNOWN")
         if status == "READY":
-            _ok(f"Harness 状态正常: {status}")
+            _ok(f"Harness status OK: {status}")
         else:
-            _warn(f"Harness 状态: {status}（非 READY，可能仍在初始化）")
+            _warn(f"Harness status: {status} (not READY, may still be initializing)")
     except Exception as e:
-        _err(f"无法访问 Harness: {e}")
-        console.print("  请确认 ARN 正确且你的 AWS 账号有访问权限")
-        if not Confirm.ask("  仍然保存此 ARN?", default=False):
+        _err(f"Cannot access Harness: {e}")
+        console.print("  Confirm the ARN is correct and your AWS account has access")
+        if not Confirm.ask("  Save this ARN anyway?", default=False):
             sys.exit(1)
 
     _save_env("HARNESS_ARN", harness_arn)
     os.environ["HARNESS_ARN"] = harness_arn
 
-    # ── 完成 ──────────────────────────────────────────────────────────────
+    # ── Done ──────────────────────────────────────────────────────────────
     console.print(Panel(
-        "[bold green]🎉 配置完成！[/bold green]\n\n"
-        f"配置文件: [cyan]{ENV_FILE}[/cyan]\n"
-        "运行 [bold]uv run hare[/bold] 开始使用\n"
-        "随时可通过 [bold]uv run hare --setup[/bold] 重新配置",
+        "[bold green]🎉 Setup complete![/bold green]\n\n"
+        f"Config file: [cyan]{ENV_FILE}[/cyan]\n"
+        "Run [bold]uv run hare[/bold] to get started\n"
+        "Re-run [bold]uv run hare --setup[/bold] anytime to reconfigure",
         border_style="green",
         padding=(1, 4),
     ))
 
 
 def needs_onboarding() -> bool:
-    """检测是否需要 onboarding（HARNESS_ARN 未配置或为模板值）。"""
+    """Check if onboarding is needed (HARNESS_ARN not configured or is a placeholder)."""
     if ENV_FILE.exists():
         load_dotenv(ENV_FILE, override=False)
     arn = os.environ.get("HARNESS_ARN", "")

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Sub-agent 工具 — 在同一个 Harness 上启动子会话执行独立子任务。
+"""Sub-agent tool — spawn sub-sessions on the same Harness for independent sub-tasks.
 
-子会话特点：
-- 独立的短期记忆（对话历史隔离）
-- 共享长期记忆（跨 session 的提炼信息可互通）
-- 临时性：用完即弃，不出现在会话列表中
-- session_id 以 hsub_ 开头，方便区分
+Sub-session characteristics:
+- Independent short-term memory (conversation history is isolated)
+- Shared long-term memory (distilled info across sessions is accessible)
+- Ephemeral: disposed after use, not shown in session list
+- session_id starts with hsub_ for easy identification
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import boto3
 
 
 def _new_sub_session_id(parent_session_id: str) -> str:
-    """生成子会话 ID：hsub_ + 父会话前8位 + _ + 短 uuid。"""
+    """Generate sub-session ID: hsub_ + first 8 chars of parent + _ + short uuid."""
     parent_prefix = parent_session_id[1:9] if parent_session_id.startswith("h") else parent_session_id[:8]
     return f"hsub_{parent_prefix}_{uuid.uuid4().hex[:12]}"
 
@@ -29,11 +29,11 @@ def sub_task(
     system_prompt: str | None = None,
 ) -> dict[str, Any]:
     """
-    启动一个子任务会话，执行完毕后返回结果。
+    Spawn a sub-task session, return results after completion.
 
-    task: 子任务的描述/指令
-    parent_session_id: 父会话 ID（用于生成子会话 ID 前缀）
-    system_prompt: 可选的子任务 system prompt（默认用简洁的任务执行 prompt）
+    task: sub-task description/instructions
+    parent_session_id: parent session ID (used to generate sub-session ID prefix)
+    system_prompt: optional sub-task system prompt (defaults to a concise task execution prompt)
     """
     session = boto3.Session(
         region_name=os.environ.get("AWS_REGION", "us-west-2"),
@@ -44,7 +44,7 @@ def sub_task(
 
     sub_session_id = _new_sub_session_id(parent_session_id or "h_unknown_")
 
-    default_system = "你是一个专注执行子任务的助手。直接完成任务，简洁回复结果，不要寒暄。"
+    default_system = "You are a focused sub-task assistant. Complete the task directly, reply concisely with results, no small talk."
     sys_prompt = [{"text": system_prompt or default_system}]
 
     try:

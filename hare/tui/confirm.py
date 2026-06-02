@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""TUI 工具调用确认交互。
+"""TUI tool call confirmation interaction.
 
-询问用户是否允许执行工具：
-  y/Enter - 允许本次
-  n       - 拒绝
-  a       - 本次会话始终允许该工具
-  A       - 永久写入白名单
+Ask user whether to allow tool execution:
+  y/Enter - Allow this time
+  n       - Deny
+  a       - Always allow this tool for current session
+  A       - Permanently add to allowlist
 """
 from __future__ import annotations
 
@@ -24,26 +24,26 @@ console = Console()
 
 
 async def confirm_tool_call(tool_name: str, input_data: dict) -> bool:
-    """询问用户是否允许执行工具。返回 True 表示允许。
+    """Ask user whether to allow tool execution. Returns True if allowed.
 
-    如果工具已在白名单或会话允许列表中，直接返回 True。
+    If tool is already in the allowlist or session allow list, returns True directly.
     """
     if is_allowed(tool_name) or is_session_allowed(tool_name):
         return True
 
     console.print(
-        f"[bold yellow]  ⚠ 工具 [white]{tool_name}[/white] 请求执行[/bold yellow]"
+        f"[bold yellow]  ⚠ Tool [white]{tool_name}[/white] requests execution[/bold yellow]"
     )
-    console.print(f"[dim]    参数: {input_data}[/dim]")
+    console.print(f"[dim]    Args: {input_data}[/dim]")
     console.print(
-        "[dim]    [y/Enter] 允许  [n] 拒绝  "
-        "[a] 本次会话始终允许  [A] 永久加入白名单[/dim]"
+        "[dim]    [y/Enter] Allow  [n] Deny  "
+        "[a] Always allow this session  [A] Add to permanent allowlist[/dim]"
     )
 
     session = PromptSession()
     try:
         answer = await session.prompt_async(
-            HTML("    <ansiyellow><b>允许？</b></ansiyellow> "),
+            HTML("    <ansiyellow><b>Allow?</b></ansiyellow> "),
         )
     except (EOFError, KeyboardInterrupt):
         return False
@@ -54,12 +54,12 @@ async def confirm_tool_call(tool_name: str, input_data: dict) -> bool:
         return True
     elif answer == "a":
         add_session_allow(tool_name)
-        console.print(f"[dim]    ✓ 本次会话始终允许 {tool_name}[/dim]")
+        console.print(f"[dim]    ✓ Always allowing {tool_name} this session[/dim]")
         return True
     elif answer == "A":
         add_permanent_allow(tool_name)
-        console.print(f"[green]    ✓ 已将 {tool_name} 加入永久白名单[/green]")
+        console.print(f"[green]    ✓ Added {tool_name} to permanent allowlist[/green]")
         return True
     else:
-        console.print("[dim]    ✗ 已拒绝[/dim]")
+        console.print("[dim]    ✗ Denied[/dim]")
         return False

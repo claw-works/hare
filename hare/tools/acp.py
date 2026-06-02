@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""ACP (Agent Communication Protocol) — 通过 stream-json 与本地 coding agent 双向通信。
+"""ACP (Agent Communication Protocol) — bidirectional communication with local coding agents via stream-json.
 
-Claude Code ACP 模式：
+Claude Code ACP mode:
   claude -p --output-format stream-json --input-format stream-json
 
-支持的 agent：
-- claude: Claude Code CLI (stream-json 双向流)
-- kiro: Kiro CLI (print 模式)
+Supported agents:
+- claude: Claude Code CLI (stream-json bidirectional stream)
+- kiro: Kiro CLI (print mode)
 
-配置文件：~/.hare/acp.yaml
+Config file: ~/.hare/acp.yaml
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ DEFAULT_AGENTS = {
             "--dangerously-skip-permissions",
             "{prompt}",
         ],
-        "description": "Claude Code — ACP stream-json 模式",
+        "description": "Claude Code — ACP stream-json mode",
         "enabled": True,
         "working_dir": None,
         "timeout": 300,
@@ -41,7 +41,7 @@ DEFAULT_AGENTS = {
     "kiro": {
         "command": "kiro",
         "args": ["--prompt", "{prompt}"],
-        "description": "Kiro CLI — AI 编程工具",
+        "description": "Kiro CLI — AI coding tool",
         "enabled": False,
         "working_dir": None,
         "timeout": 300,
@@ -68,15 +68,15 @@ def _save_acp_config(agents: dict) -> None:
 
 
 def ensure_acp_config() -> None:
-    """确保 acp.yaml 存在。"""
+    """Ensure acp.yaml exists."""
     if not ACP_CONFIG.exists():
         _save_acp_config(DEFAULT_AGENTS)
 
 
 def _parse_stream_json(output: str) -> str:
-    """从 stream-json 输出中提取最终结果文本。
+    """Extract final result text from stream-json output.
 
-    stream-json 每行一个 JSON 对象，格式如：
+    stream-json has one JSON object per line, format:
     {"type": "assistant", "message": {"content": [{"type": "text", "text": "..."}]}}
     {"type": "result", "result": "...", "cost_usd": 0.01, ...}
     """
@@ -92,11 +92,11 @@ def _parse_stream_json(output: str) -> str:
         etype = event.get("type", "")
 
         if etype == "result":
-            # 最终结果
+            # Final result
             result_text = event.get("result", "")
             break
         elif etype == "assistant":
-            # 中间 assistant 消息，提取文本
+            # Intermediate assistant message, extract text
             msg = event.get("message", {})
             content = msg.get("content", [])
             for block in content:
@@ -112,27 +112,27 @@ async def invoke_agent(
     working_dir: str | None = None,
 ) -> dict[str, Any]:
     """
-    调用指定的 coding agent 执行编程任务。
+    Invoke the specified coding agent to execute a coding task.
 
-    agent: agent 名称（claude, kiro, 等）
-    prompt: 要发送给 agent 的提示/任务描述
-    working_dir: 工作目录（可选，默认用 agent 配置或当前目录）
+    agent: agent name (claude, kiro, etc.)
+    prompt: the prompt/task description to send to the agent
+    working_dir: working directory (optional, defaults to agent config or cwd)
     """
     agents = _load_acp_config()
 
     if agent not in agents:
         available = [k for k, v in agents.items() if v.get("enabled", True)]
-        return {"error": f"未知 agent: '{agent}'", "available": available}
+        return {"error": f"Unknown agent: '{agent}'", "available": available}
 
     cfg = agents[agent]
     if not cfg.get("enabled", True):
-        return {"error": f"agent '{agent}' 未启用，请在 ~/.hare/acp.yaml 中开启"}
+        return {"error": f"Agent '{agent}' is not enabled, enable it in ~/.hare/acp.yaml"}
 
     command = cfg["command"]
     if not shutil.which(command):
-        return {"error": f"未找到命令 '{command}'，请确认已安装"}
+        return {"error": f"Command '{command}' not found, confirm it is installed"}
 
-    # 构建参数，替换 {prompt} 占位符
+    # Build args, replace {prompt} placeholder
     args = []
     for arg in cfg.get("args", []):
         if "{prompt}" in arg:
@@ -140,7 +140,7 @@ async def invoke_agent(
         else:
             args.append(arg)
 
-    # 工作目录
+    # Working directory
     cwd = working_dir or cfg.get("working_dir") or os.getcwd()
     timeout = cfg.get("timeout", 300)
 
@@ -157,28 +157,28 @@ async def invoke_agent(
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-            return {"error": f"agent '{agent}' 执行超时（{timeout}s）"}
+            return {"error": f"Agent '{agent}' timed out ({timeout}s)"}
 
         stdout_text = stdout.decode("utf-8", errors="replace").strip()
         stderr_text = stderr.decode("utf-8", errors="replace").strip()
 
         if proc.returncode != 0:
             return {
-                "error": f"agent '{agent}' 退出码 {proc.returncode}",
+                "error": f"Agent '{agent}' exit code {proc.returncode}",
                 "stdout": stdout_text[-2000:] if len(stdout_text) > 2000 else stdout_text,
                 "stderr": stderr_text[-1000:] if len(stderr_text) > 1000 else stderr_text,
             }
 
-        # 对 Claude Code stream-json 输出做解析
+        # Parse Claude Code stream-json output
         is_stream_json = "--output-format" in cfg.get("args", []) and "stream-json" in cfg.get("args", [])
         if is_stream_json:
             result = _parse_stream_json(stdout_text)
         else:
             result = stdout_text
 
-        # 截断过长输出
+        # Truncate overly long output
         if len(result) > 4000:
-            result = result[:2000] + "\n\n...(中间省略)...\n\n" + result[-2000:]
+            result = result[:2000] + "\n\n...(truncated)...\n\n" + result[-2000:]
 
         return {
             "output": result,
@@ -186,13 +186,13 @@ async def invoke_agent(
         }
 
     except FileNotFoundError:
-        return {"error": f"命令 '{command}' 不存在"}
+        return {"error": f"Command '{command}' does not exist"}
     except Exception as e:
-        return {"error": f"执行失败: {str(e)}"}
+        return {"error": f"Execution failed: {str(e)}"}
 
 
 def list_agents() -> dict[str, Any]:
-    """列出所有可用的 coding agent。"""
+    """List all available coding agents."""
     agents = _load_acp_config()
     result = []
     for name, cfg in agents.items():

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""会话摘要 prompt 定义。"""
+"""Session summary prompt definition."""
 
-SUMMARIZE_PROMPT = """请根据这次对话的上下文，生成一个简短的会话标题和摘要。
+SUMMARIZE_PROMPT = """Based on this conversation's context, generate a short session title and summary.
 
-要求：
-- title: 4-10个字，概括对话主题
-- summary: 1-2句话，概括讨论了什么内容和结论
+Requirements:
+- title: 3-8 words, summarizing the conversation topic
+- summary: 1-2 sentences, summarizing what was discussed and the conclusions
 
-请严格按照以下 JSON 格式回复，不要添加任何其他内容：
+Reply strictly in the following JSON format, do not add any other content:
 {"title": "...", "summary": "..."}"""

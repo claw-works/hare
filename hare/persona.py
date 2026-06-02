@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""人设系统 — identity / soul / companion / personas 管理。
+"""Persona system — identity / soul / companion / personas management.
 
-存储结构 (~/.hare/):
-├── identity.yaml       # 当前激活的身份
-├── soul.yaml           # 行为灵魂（跨人格不变）
-├── companion.yaml      # 人类同伴信息
-└── personas/           # 预设角色库
+Storage structure (~/.hare/):
+├── identity.yaml       # Currently active identity
+├── soul.yaml           # Behavioral soul (invariant across personas)
+├── companion.yaml      # Human companion info
+└── personas/           # Preset persona library
     ├── hare.yaml
     └── ...
 """
@@ -40,29 +40,29 @@ def _save_yaml(path: Path, data: dict[str, Any]) -> None:
     )
 
 
-# ── 初始化默认文件 ─────────────────────────────────────────────────────────
+# ── Initialize default files ──────────────────────────────────────────────
 
 DEFAULT_SOUL = {
     "core": [
-        "直接帮忙，不要废话",
-        "有自己的判断，可以表达不同意见",
-        "先自己找答案，再问人",
-        "尊重被赋予的信任和访问权",
+        "Help directly, no fluff",
+        "Have your own judgment, express differing opinions",
+        "Find answers yourself first, then ask",
+        "Respect the trust and access granted to you",
     ],
     "boundaries": [
-        "私密信息不外泄",
-        "对外操作先确认",
+        "Never leak private information",
+        "Confirm before external operations",
     ],
-    "language": "中文为主，技术术语用英文",
-    "continuity": "文件即记忆，每次醒来从这里开始",
+    "language": "English primarily, technical terms as-is",
+    "continuity": "Files are memory, start from here each time you wake",
 }
 
 DEFAULT_PERSONA = {
     "name": "Hare",
-    "creature": "兔系 AI 助手",
-    "vibe": "安静可靠，话不多但管用",
+    "creature": "Rabbit-style AI assistant",
+    "vibe": "Quiet and reliable, few words but effective",
     "emoji": "🐇",
-    "tone": "简洁直接，偶尔幽默",
+    "tone": "Concise and direct, occasionally humorous",
 }
 
 DEFAULT_COMPANION = {
@@ -73,7 +73,7 @@ DEFAULT_COMPANION = {
 
 
 def ensure_defaults() -> None:
-    """确保默认配置文件存在。"""
+    """Ensure default config files exist."""
     PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
 
     if not SOUL_FILE.exists():
@@ -90,7 +90,7 @@ def ensure_defaults() -> None:
         _save_yaml(COMPANION_FILE, DEFAULT_COMPANION)
 
 
-# ── 查询 ──────────────────────────────────────────────────────────────────
+# ── Query ─────────────────────────────────────────────────────────────────
 
 def get_active_persona_name() -> str:
     identity = _load_yaml(IDENTITY_FILE)
@@ -98,7 +98,7 @@ def get_active_persona_name() -> str:
 
 
 def get_persona(name: str | None = None) -> dict[str, Any]:
-    """获取指定人格，默认为当前激活的。"""
+    """Get the specified persona, defaults to the currently active one."""
     if name is None:
         name = get_active_persona_name()
     path = PERSONAS_DIR / f"{name}.yaml"
@@ -116,7 +116,7 @@ def get_companion() -> dict[str, Any]:
 
 
 def list_personas() -> list[dict[str, Any]]:
-    """列出所有可用人格，返回 [{name, ...persona_data}]。"""
+    """List all available personas, returns [{name, ...persona_data}]."""
     result = []
     if PERSONAS_DIR.exists():
         for f in sorted(PERSONAS_DIR.glob("*.yaml")):
@@ -126,10 +126,10 @@ def list_personas() -> list[dict[str, Any]]:
     return result
 
 
-# ── 切换 ──────────────────────────────────────────────────────────────────
+# ── Switch ────────────────────────────────────────────────────────────────
 
 def set_active_persona(name: str) -> bool:
-    """切换当前人格。返回是否成功。"""
+    """Switch the active persona. Returns success."""
     path = PERSONAS_DIR / f"{name}.yaml"
     if not path.exists():
         return False
@@ -139,10 +139,10 @@ def set_active_persona(name: str) -> bool:
     return True
 
 
-# ── 构建 System Prompt ────────────────────────────────────────────────────
+# ── Build System Prompt ───────────────────────────────────────────────────
 
 def build_persona_prompt() -> str:
-    """根据当前人设生成注入到 system prompt 的文本段落。"""
+    """Generate the system prompt text segment based on the active persona."""
     persona = get_persona()
     soul = get_soul()
     companion = get_companion()
@@ -156,37 +156,37 @@ def build_persona_prompt() -> str:
     vibe = persona.get("vibe", "")
     tone = persona.get("tone", "")
 
-    parts.append(f"你是 {name} {emoji}，{creature}。")
+    parts.append(f"You are {name} {emoji}, {creature}.")
     if vibe:
-        parts.append(f"气质：{vibe}")
+        parts.append(f"Vibe: {vibe}")
     if tone:
-        parts.append(f"语气：{tone}")
+        parts.append(f"Tone: {tone}")
 
     # Soul
     core = soul.get("core", [])
     if core:
-        parts.append("\n行为准则：")
+        parts.append("\nBehavioral principles:")
         for rule in core:
             parts.append(f"- {rule}")
 
     boundaries = soul.get("boundaries", [])
     if boundaries:
-        parts.append("\n边界：")
+        parts.append("\nBoundaries:")
         for b in boundaries:
             parts.append(f"- {b}")
 
     lang = soul.get("language")
     if lang:
-        parts.append(f"\n语言：{lang}")
+        parts.append(f"\nLanguage: {lang}")
 
     # Companion
     comp_name = companion.get("name")
     if comp_name:
         comp_ctx = companion.get("context", "")
-        parts.append(f"\n你的同伴是 {comp_name}。{comp_ctx}")
+        parts.append(f"\nYour companion is {comp_name}. {comp_ctx}")
         prefs = companion.get("preferences", [])
         if prefs:
-            parts.append("同伴偏好：")
+            parts.append("Companion preferences:")
             for p in prefs:
                 parts.append(f"- {p}")
 
