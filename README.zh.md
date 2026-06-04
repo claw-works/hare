@@ -2,7 +2,7 @@
 
 本地 TUI 终端助手，由 Amazon Bedrock AgentCore Harness 驱动。
 
-在终端里打字，AI 在云端推理；本地工具（Shell / 文件系统）在你的机器上执行，企业远端工具（MCP / API）通过 AgentCore Gateway 在云端直接调用。
+云端 AI 推理，本地工具执行。本地工具（Shell / 文件系统）在你的机器上运行，企业工具（MCP / API）通过 AgentCore Gateway 在云端直接调用——客户端无需额外基础设施或凭证配置。
 
 ---
 
@@ -127,25 +127,54 @@ gateway_tools:
 
 ## 二、员工使用
 
-> 运维已部署完成，员工只需以下三步。
+> 运维已部署完成，员工只需以下步骤。
 
-### 1. 安装依赖
+### 1. 安装
+
+直接从 GitHub 安装（无需 clone 仓库）：
 
 ```bash
-cd hare && uv sync
+# 使用 uv（推荐）
+uv tool install git+https://github.com/claw-works/hare.git
+
+# 或使用 pipx
+pipx install git+https://github.com/claw-works/hare.git
 ```
+
+安装后 `hare` 成为全局命令。
 
 ### 2. 启动
 
 ```bash
-PYTHONUTF8=1 uv run hare
+hare
 ```
 
-首次启动时，hare 会自动在 `~/.hare/` 创建配置文件：
-- `~/.hare/.env` — 从 `.env.example` 模板拷贝，需填入 `AWS_REGION`、`AWS_PROFILE`、`HARNESS_ARN`
-- `~/.hare/tools.yaml` — 从 `tools.yaml.example` 模板拷贝，可按需启用工具
+首次启动时，hare 会运行配置向导，并在 `~/.hare/` 创建配置文件：
+- `~/.hare/.env` — 需填入 `AWS_REGION`、`AWS_PROFILE`、`HARNESS_ARN`（由运维提供）
+- `~/.hare/tools.yaml` — 可按需启用工具
 
-填写完 `~/.hare/.env` 后重新运行即可。
+### 3. 更新
+
+```bash
+hare --update
+```
+
+或手动更新：
+
+```bash
+# 使用 uv
+uv tool upgrade hare
+
+# 或使用 pipx
+pipx upgrade hare
+```
+
+### 4. 其他选项
+
+```bash
+hare --setup      # 重新运行配置向导
+hare --version    # 显示版本
+```
 
 ---
 
@@ -216,10 +245,10 @@ Hare 支持多人格身份系统，设计灵感来自 [OpenClaw](https://github.
 **示例人格**（`~/.hare/personas/hare.yaml`）：
 ```yaml
 name: "Hare"
-creature: "兔系 AI 助手"
-vibe: "安静可靠，话不多但管用"
+creature: "Rabbit-style AI assistant"
+vibe: "Quiet and reliable, few words but effective"
 emoji: "🐇"
-tone: "简洁直接，偶尔幽默"
+tone: "Concise and direct, occasionally humorous"
 ```
 
 **自治能力：** Hare 可以通过内置 `persona_manage` 工具自主创建、修改、切换人格。对它说"变成猫娘"或"帮我加一个海盗角色"，它会自己搞定。
@@ -343,12 +372,19 @@ hare/
 
 ## 开发
 
+开发者本地开发 hare 本身：
+
 ```bash
-# 添加新本地工具：
-# 1. 在 hare/tools/ 下新建 .py 文件
-# 2. 在 hare/tools/__init__.py 注册到 TOOL_REGISTRY 和 TOOL_DEFINITIONS
-# 3. 在 tools.yaml 中添加对应条目
+git clone https://github.com/claw-works/hare.git
+cd hare
+uv sync
+uv run hare          # 开发模式运行
 ```
+
+添加新本地工具：
+1. 在 `hare/tools/` 下新建 `.py` 文件
+2. 在 `hare/tools/__init__.py` 注册到 `TOOL_REGISTRY` 和 `TOOL_DEFINITIONS`
+3. 在 `tools.yaml` 中添加对应条目
 
 ---
 

@@ -2,7 +2,7 @@
 
 A local TUI terminal assistant powered by Amazon Bedrock AgentCore Harness.
 
-Type in your terminal, AI reasons in the cloud; local tools (Shell / Filesystem) execute on your machine, while enterprise remote tools (MCP / API) are invoked directly in the cloud via AgentCore Gateway.
+A local terminal assistant with cloud-powered AI reasoning. Local tools (Shell / Filesystem) run on your machine, while enterprise tools (MCP / API) are invoked server-side via AgentCore Gateway — no credentials or infra needed on the client.
 
 ---
 
@@ -395,7 +395,7 @@ Adding a new local tool:
 
 - **Arrow key navigation** in session picker
 - **Search** — type `/` in session picker to filter by name/summary
-- **Session recap** — on enter/switch, shows a one-line summary of the last conversation ("📝 上次: ...")
+- **Session recap** — on enter/switch, shows a one-line summary of the last conversation
 - **Auto-summarization**: After 3 turns (and every 5 turns thereafter), Hare generates/updates title and summary in background
 - **Per-turn stats**: Each response shows elapsed time, token usage (↑input ↓output), and tools called
 - **Error recovery**: Handles 413 payload errors and corrupted Memory (auto-derives new session ID to bypass)
