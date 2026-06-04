@@ -130,25 +130,54 @@ gateway_tools:
 
 ## Part II: Employee Setup
 
-> Admin has completed deployment. Employees only need these three steps.
+> Admin has completed deployment. Employees only need these steps.
 
-### 1. Install Dependencies
+### 1. Install
+
+Install directly from GitHub (no need to clone the repo):
 
 ```bash
-cd hare && uv sync
+# Using uv (recommended)
+uv tool install git+https://github.com/claw-works/hare.git
+
+# Or using pipx
+pipx install git+https://github.com/claw-works/hare.git
 ```
+
+This installs `hare` as a global CLI command.
 
 ### 2. Launch
 
 ```bash
-PYTHONUTF8=1 uv run hare
+hare
 ```
 
-On first launch, hare automatically creates config files in `~/.hare/`:
-- `~/.hare/.env` — copied from `.env.example` template, fill in `AWS_REGION`, `AWS_PROFILE`, `HARNESS_ARN`
-- `~/.hare/tools.yaml` — copied from `tools.yaml.example` template, enable tools as needed
+On first launch, hare runs the setup wizard and creates config files in `~/.hare/`:
+- `~/.hare/.env` — fill in `AWS_REGION`, `AWS_PROFILE`, `HARNESS_ARN` (provided by admin)
+- `~/.hare/tools.yaml` — enable tools as needed
 
-After filling in `~/.hare/.env`, re-run to start.
+### 3. Update
+
+```bash
+hare --update
+```
+
+Or manually:
+
+```bash
+# Using uv
+uv tool upgrade hare
+
+# Or using pipx
+pipx upgrade hare
+```
+
+### 4. Other CLI Options
+
+```bash
+hare --setup      # Re-run the setup wizard
+hare --version    # Show version
+```
 
 ---
 
@@ -346,12 +375,19 @@ hare/
 
 ## Development
 
+For contributors working on hare itself:
+
 ```bash
-# Adding a new local tool:
-# 1. Create a new .py file under hare/tools/
-# 2. Register it in hare/tools/__init__.py (TOOL_REGISTRY and TOOL_DEFINITIONS)
-# 3. Add the corresponding entry in tools.yaml
+git clone https://github.com/claw-works/hare.git
+cd hare
+uv sync
+uv run hare          # Run in dev mode
 ```
+
+Adding a new local tool:
+1. Create a new `.py` file under `hare/tools/`
+2. Register it in `hare/tools/__init__.py` (`TOOL_REGISTRY` and `TOOL_DEFINITIONS`)
+3. Add the corresponding entry in `tools.yaml`
 
 ---
 
